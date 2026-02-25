@@ -6,21 +6,34 @@ use ratatui::{
     Frame,
 };
 
-use swarmit_core::models::Status;
+use swarmit_core::models::{ItemId, Status};
 
 use crate::app::App;
+
+/// A row in the flattened dashboard tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DashboardRow {
+    /// An epic header row (expandable/collapsible).
+    Epic { id: ItemId },
+    /// A task belonging to an epic (shown when epic is expanded).
+    Task { id: ItemId },
+    /// Separator header for tasks with no epic.
+    BacklogHeader,
+    /// A task with no epic assignment.
+    BacklogTask { id: ItemId },
+}
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(5),  // Summary header
-            Constraint::Min(0),     // Epic table
+            Constraint::Min(0),     // Tree view
         ])
         .split(area);
 
     render_summary(f, app, chunks[0]);
-    render_epic_table(f, app, chunks[1]);
+    render_tree(f, app, chunks[1]);
 }
 
 fn render_summary(f: &mut Frame, app: &App, area: Rect) {
@@ -62,7 +75,7 @@ fn render_summary(f: &mut Frame, app: &App, area: Rect) {
         ]),
         Line::from(""),
         Line::from(Span::styled(
-            " Press Enter on an epic to open its board",
+            " Enter:open  Space:expand/collapse",
             Style::default().fg(theme.muted_color()).add_modifier(Modifier::ITALIC),
         )),
     ];
@@ -76,63 +89,155 @@ fn render_summary(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(para, area);
 }
 
-fn render_epic_table(f: &mut Frame, app: &App, area: Rect) {
+fn render_tree(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
-    let epics: Vec<_> = app.state.epics.values().collect();
 
-    let header = Row::new(vec!["ID", "STATUS", "PRIORITY", "TASKS", "TITLE"])
+    // Column widths: indicator+ID, title, status, priority, meta
+    let widths = [
+        Constraint::Length(14),  // ID (with prefix for indent/indicator)
+        Constraint::Min(24),     // Title
+        Constraint::Length(13),  // Status
+        Constraint::Length(10),  // Priority
+        Constraint::Length(16),  // Task count / assignee
+    ];
+
+    let header = Row::new(vec!["", "TITLE", "STATUS", "PRIORITY", ""])
         .style(theme.header_style())
         .height(1);
 
-    let rows: Vec<Row> = epics
+    let rows: Vec<Row> = app
+        .dashboard_rows
         .iter()
         .enumerate()
-        .map(|(i, epic)| {
-            let status_str = epic.status.to_string();
-            let priority_str = epic.priority.to_string();
-            let task_count = epic.task_ids.len().to_string();
+        .map(|(i, row)| {
+            let is_selected = i == app.selected_index;
 
-            let style = if i == app.selected_index {
-                theme.selected_style()
-            } else {
-                theme.normal_style()
-            };
+            match row {
+                DashboardRow::Epic { id } => {
+                    let epic = match app.state.epics.get(id) {
+                        Some(e) => e,
+                        None => return Row::new(vec![Cell::from("")]),
+                    };
+                    let collapsed = app.collapsed_epics.contains(id);
+                    let indicator = if collapsed { "▶" } else { "▼" };
+                    let task_count = epic.task_ids.len();
 
-            Row::new(vec![
-                Cell::from(epic.id.to_string()),
-                Cell::from(status_str.clone()).style(
-                    Style::default().fg(theme.status_color(&status_str)),
-                ),
-                Cell::from(priority_str.clone()).style(
-                    Style::default().fg(theme.priority_color(&priority_str)),
-                ),
-                Cell::from(task_count),
-                Cell::from(epic.title.clone()),
-            ])
-            .style(style)
+                    let id_cell = format!("{} {}", indicator, epic.id);
+                    let status_str = epic.status.to_string();
+                    let priority_str = epic.priority.to_string();
+                    let meta = format!("{} task{}", task_count, if task_count == 1 { "" } else { "s" });
+
+                    let style = if is_selected {
+                        theme.selected_style()
+                    } else {
+                        theme.normal_style().add_modifier(Modifier::BOLD)
+                    };
+
+                    Row::new(vec![
+                        Cell::from(id_cell),
+                        Cell::from(epic.title.clone()),
+                        Cell::from(status_str.clone())
+                            .style(Style::default().fg(theme.status_color(&status_str))),
+                        Cell::from(priority_str.clone())
+                            .style(Style::default().fg(theme.priority_color(&priority_str))),
+                        Cell::from(meta).style(theme.muted_style()),
+                    ])
+                    .style(style)
+                }
+
+                DashboardRow::Task { id } => {
+                    let task = match app.state.tasks.get(id) {
+                        Some(t) => t,
+                        None => return Row::new(vec![Cell::from("")]),
+                    };
+
+                    let id_cell = format!("    {}", task.id);
+                    let status_str = task.status.to_string();
+                    let priority_str = task.priority.to_string();
+                    let assignee = task
+                        .assignee
+                        .as_ref()
+                        .map(|a| format!("@{}", a))
+                        .unwrap_or_default();
+
+                    let style = if is_selected {
+                        theme.selected_style()
+                    } else {
+                        theme.normal_style()
+                    };
+
+                    Row::new(vec![
+                        Cell::from(id_cell),
+                        Cell::from(task.title.clone()),
+                        Cell::from(status_str.clone())
+                            .style(Style::default().fg(theme.status_color(&status_str))),
+                        Cell::from(priority_str.clone())
+                            .style(Style::default().fg(theme.priority_color(&priority_str))),
+                        Cell::from(assignee).style(theme.muted_style()),
+                    ])
+                    .style(style)
+                }
+
+                DashboardRow::BacklogHeader => {
+                    // Full-width muted separator — not selectable.
+                    Row::new(vec![
+                        Cell::from("── Backlog"),
+                        Cell::from(""),
+                        Cell::from(""),
+                        Cell::from(""),
+                        Cell::from(""),
+                    ])
+                    .style(theme.muted_style().add_modifier(Modifier::DIM))
+                }
+
+                DashboardRow::BacklogTask { id } => {
+                    let task = match app.state.tasks.get(id) {
+                        Some(t) => t,
+                        None => return Row::new(vec![Cell::from("")]),
+                    };
+
+                    let id_cell = format!("    {}", task.id);
+                    let status_str = task.status.to_string();
+                    let priority_str = task.priority.to_string();
+                    let assignee = task
+                        .assignee
+                        .as_ref()
+                        .map(|a| format!("@{}", a))
+                        .unwrap_or_default();
+
+                    let style = if is_selected {
+                        theme.selected_style()
+                    } else {
+                        theme.normal_style()
+                    };
+
+                    Row::new(vec![
+                        Cell::from(id_cell),
+                        Cell::from(task.title.clone()),
+                        Cell::from(status_str.clone())
+                            .style(Style::default().fg(theme.status_color(&status_str))),
+                        Cell::from(priority_str.clone())
+                            .style(Style::default().fg(theme.priority_color(&priority_str))),
+                        Cell::from(assignee).style(theme.muted_style()),
+                    ])
+                    .style(style)
+                }
+            }
         })
         .collect();
-
-    let widths = [
-        Constraint::Length(10),
-        Constraint::Length(12),
-        Constraint::Length(10),
-        Constraint::Length(7),
-        Constraint::Min(20),
-    ];
 
     let table = Table::new(rows, widths)
         .header(header)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(Span::styled(" Epics ", theme.title_style()))
+                .title(Span::styled(" Dashboard ", theme.title_style()))
                 .border_style(theme.border_style()),
         )
         .row_highlight_style(theme.selected_style());
 
     let mut state = TableState::default();
-    if !epics.is_empty() {
+    if !app.dashboard_rows.is_empty() {
         state.select(Some(app.selected_index));
     }
 

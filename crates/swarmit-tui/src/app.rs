@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
@@ -11,6 +12,7 @@ use swarmit_core::events::operations::{Operation, OperationKind};
 use swarmit_core::models::{AgentId, ItemId, Priority};
 use swarmit_core::state::ProjectState;
 
+use crate::components::dashboard::DashboardRow;
 use crate::events::{Action, Modal, Screen, TaskFormField};
 use crate::theme::Theme;
 
@@ -40,6 +42,12 @@ pub struct App {
 
     // Active modal overlay (None = no modal).
     pub modal: Option<Modal>,
+
+    // Epics that are currently collapsed in the dashboard tree.
+    pub collapsed_epics: HashSet<ItemId>,
+
+    // Cached flattened tree rows for the dashboard (rebuilt on state changes).
+    pub dashboard_rows: Vec<DashboardRow>,
 }
 
 impl App {
@@ -65,7 +73,7 @@ impl App {
                 .watch(&log_path, RecursiveMode::NonRecursive)?;
         }
 
-        Ok(App {
+        let mut app = App {
             state,
             screen: Screen::Dashboard,
             project_root,
@@ -78,7 +86,11 @@ impl App {
             should_quit: false,
             search_query: String::new(),
             modal: None,
-        })
+            collapsed_epics: HashSet::new(),
+            dashboard_rows: Vec::new(),
+        };
+        app.rebuild_dashboard_rows();
+        Ok(app)
     }
 
     /// Process an action and update state accordingly.
@@ -105,6 +117,7 @@ impl App {
             Action::GotoDashboard => {
                 self.screen = Screen::Dashboard;
                 self.selected_index = 0;
+                self.rebuild_dashboard_rows();
             }
             Action::GotoBacklog => {
                 self.screen = Screen::Board {
@@ -125,6 +138,32 @@ impl App {
             }
             Action::Refresh => {
                 self.poll_log_changes();
+            }
+            Action::ToggleCollapse => {
+                if matches!(self.screen, Screen::Dashboard) {
+                    // Find the epic at the current selection position.
+                    if let Some(row) = self.dashboard_rows.get(self.selected_index).cloned() {
+                        let epic_id = match row {
+                            DashboardRow::Epic { id } => Some(id),
+                            DashboardRow::Task { id } => {
+                                // Find the epic that owns this task.
+                                self.state
+                                    .tasks
+                                    .get(&id)
+                                    .and_then(|t| t.epic_id.clone())
+                            }
+                            _ => None,
+                        };
+                        if let Some(eid) = epic_id {
+                            if self.collapsed_epics.contains(&eid) {
+                                self.collapsed_epics.remove(&eid);
+                            } else {
+                                self.collapsed_epics.insert(eid);
+                            }
+                            self.rebuild_dashboard_rows();
+                        }
+                    }
+                }
             }
             _ => {}
         }
@@ -337,6 +376,7 @@ impl App {
                     .map(|m| m.len())
                     .unwrap_or(self.log_offset);
                 self.modal = None;
+                self.rebuild_dashboard_rows();
             }
             Err(e) => {
                 if let Some(Modal::TaskCreate { ref mut error, .. }) = self.modal {
@@ -361,29 +401,114 @@ impl App {
             Screen::Dashboard => Screen::Dashboard,
         };
         self.selected_index = 0;
+        if self.screen == Screen::Dashboard {
+            self.rebuild_dashboard_rows();
+        }
+    }
+
+    /// Rebuild the flat `dashboard_rows` cache from current state.
+    ///
+    /// Structure: epics (with their tasks when expanded), then a BacklogHeader
+    /// + BacklogTask entries for tasks that have no epic.
+    pub fn rebuild_dashboard_rows(&mut self) {
+        let mut rows = Vec::new();
+
+        // Iterate epics in BTreeMap order (deterministic).
+        for (epic_id, epic) in &self.state.epics {
+            rows.push(DashboardRow::Epic { id: epic_id.clone() });
+
+            if !self.collapsed_epics.contains(epic_id) {
+                for task_id in &epic.task_ids {
+                    rows.push(DashboardRow::Task { id: task_id.clone() });
+                }
+            }
+        }
+
+        // Collect orphan tasks (no epic).
+        let orphans: Vec<ItemId> = self
+            .state
+            .tasks
+            .values()
+            .filter(|t| t.epic_id.is_none())
+            .map(|t| t.id.clone())
+            .collect();
+
+        if !orphans.is_empty() {
+            rows.push(DashboardRow::BacklogHeader);
+            for task_id in orphans {
+                rows.push(DashboardRow::BacklogTask { id: task_id });
+            }
+        }
+
+        self.dashboard_rows = rows;
+
+        // Clamp selection to valid bounds.
+        let max = self.dashboard_rows.len().saturating_sub(1);
+        if self.selected_index > max {
+            self.selected_index = max;
+        }
     }
 
     fn move_up(&mut self) {
-        self.selected_index = self.selected_index.saturating_sub(1);
+        if matches!(self.screen, Screen::Dashboard) {
+            // Skip BacklogHeader rows (non-selectable).
+            let mut idx = self.selected_index;
+            loop {
+                if idx == 0 {
+                    break;
+                }
+                idx -= 1;
+                if !matches!(
+                    self.dashboard_rows.get(idx),
+                    Some(DashboardRow::BacklogHeader)
+                ) {
+                    self.selected_index = idx;
+                    break;
+                }
+            }
+        } else {
+            self.selected_index = self.selected_index.saturating_sub(1);
+        }
     }
 
     fn move_down(&mut self) {
-        let max = self.current_list_len().saturating_sub(1);
-        if self.selected_index < max {
-            self.selected_index += 1;
+        if matches!(self.screen, Screen::Dashboard) {
+            let len = self.dashboard_rows.len();
+            let mut idx = self.selected_index;
+            loop {
+                if idx + 1 >= len {
+                    break;
+                }
+                idx += 1;
+                if !matches!(
+                    self.dashboard_rows.get(idx),
+                    Some(DashboardRow::BacklogHeader)
+                ) {
+                    self.selected_index = idx;
+                    break;
+                }
+            }
+        } else {
+            let max = self.current_list_len().saturating_sub(1);
+            if self.selected_index < max {
+                self.selected_index += 1;
+            }
         }
     }
 
     fn select_item(&mut self) {
         match self.screen.clone() {
             Screen::Dashboard => {
-                // Select an epic to view its board
-                let epics: Vec<_> = self.state.epics.keys().cloned().collect();
-                if let Some(epic_id) = epics.get(self.selected_index) {
-                    self.screen = Screen::Board {
-                        epic_id: epic_id.clone(),
-                    };
-                    self.selected_index = 0;
+                match self.dashboard_rows.get(self.selected_index).cloned() {
+                    Some(DashboardRow::Epic { id }) => {
+                        self.screen = Screen::Board { epic_id: id };
+                        self.selected_index = 0;
+                    }
+                    Some(DashboardRow::Task { id }) | Some(DashboardRow::BacklogTask { id }) => {
+                        self.screen = Screen::TaskDetail { task_id: id };
+                        self.selected_index = 0;
+                    }
+                    Some(DashboardRow::BacklogHeader) | None => {}
                 }
             }
             Screen::Board { epic_id } => {
@@ -408,7 +533,7 @@ impl App {
 
     fn current_list_len(&self) -> usize {
         match &self.screen {
-            Screen::Dashboard => self.state.epics.len(),
+            Screen::Dashboard => self.dashboard_rows.len(),
             Screen::Board { epic_id } => self
                 .state
                 .tasks
@@ -441,6 +566,7 @@ impl App {
                     let _ = self.state.apply(op);
                 }
                 self.log_offset = new_offset;
+                self.rebuild_dashboard_rows();
             }
         }
     }

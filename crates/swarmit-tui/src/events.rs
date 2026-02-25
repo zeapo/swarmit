@@ -28,6 +28,7 @@ pub enum Action {
     GotoBacklog,
     GotoActivity,
     Refresh,
+    ToggleCollapse,
     None,
 }
 
