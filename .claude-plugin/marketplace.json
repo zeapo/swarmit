@@ -1,0 +1,11 @@
+{
+  "name": "swarmit-marketplace",
+  "owner": { "name": "zeapo" },
+  "plugins": [
+    {
+      "name": "swarmit",
+      "source": "./plugin",
+      "description": "Multi-agent task management skill for Claude Code agents"
+    }
+  ]
+}
