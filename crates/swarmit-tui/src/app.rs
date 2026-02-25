@@ -61,6 +61,9 @@ pub struct App {
     // Navigation: index of selected item in the current list.
     pub selected_index: usize,
 
+    // Navigation: index of selected column in GlobalBoard.
+    pub selected_column: usize,
+
     // File watcher for live refresh.
     watcher_rx: Option<Receiver<DebounceEventResult>>,
     // Suppress the Drop warning — the watcher must be kept alive.
@@ -123,6 +126,7 @@ impl App {
             project_root,
             theme,
             selected_index: 0,
+            selected_column: 0,
             watcher_rx: Some(rx),
             _debouncer: Some(debouncer),
             log_offset,
@@ -165,10 +169,12 @@ impl App {
             Action::Down => self.move_down(),
             Action::Select => self.select_item(),
             Action::GotoDashboard => {
+                self.selected_column = 0;
                 self.navigate_to(Screen::Dashboard);
                 self.rebuild_dashboard_rows();
             }
             Action::GotoActivity => {
+                self.selected_column = 0;
                 self.navigate_to(Screen::Activity);
             }
             Action::Help => {
@@ -616,11 +622,13 @@ impl App {
         self.screen_history.push(self.screen.clone());
         self.screen = screen;
         self.selected_index = 0;
+        self.selected_column = 0;
     }
 
     fn go_back(&mut self) {
         self.screen = self.screen_history.pop().unwrap_or(Screen::Dashboard);
         self.selected_index = 0;
+        self.selected_column = 0;
         if self.screen == Screen::Dashboard {
             self.rebuild_dashboard_rows();
         }
