@@ -148,7 +148,7 @@ fn key_to_action(code: KeyCode, _modifiers: KeyModifiers, screen: &Screen) -> Ac
         KeyCode::Char('k') | KeyCode::Up => Action::Up,
         KeyCode::Enter => Action::Select,
         KeyCode::Char(' ') if matches!(screen, Screen::Dashboard) => Action::ToggleCollapse,
-        KeyCode::Char('f') if matches!(screen, Screen::Dashboard) => Action::CycleFilter,
+        KeyCode::Char('f') if matches!(screen, Screen::Dashboard) => Action::OpenFilterDialog,
         KeyCode::Esc => Action::Back,
         KeyCode::Char('?') => Action::Help,
         KeyCode::Char('/') => Action::Search,

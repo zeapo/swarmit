@@ -28,7 +28,10 @@ pub enum Action {
     GotoActivity,
     Refresh,
     ToggleCollapse,
-    CycleFilter,
+    OpenFilterDialog,
+    FilterDialogMove(i8),
+    FilterDialogConfirm,
+    FilterDialogCancel,
     None,
 }
 

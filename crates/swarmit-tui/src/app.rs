@@ -171,9 +171,36 @@ impl App {
                     }
                 }
             }
-            Action::CycleFilter => {
-                self.dashboard_filter = next_status_filter(self.dashboard_filter);
-                self.rebuild_dashboard_rows();
+            action => self.apply_action(action),
+        }
+    }
+
+    /// Apply filter-dialog actions (also called from `handle_filter_select_key`).
+    fn apply_action(&mut self, action: Action) {
+        match action {
+            Action::OpenFilterDialog => {
+                let selected_index = FILTER_OPTIONS
+                    .iter()
+                    .position(|opt| *opt == self.dashboard_filter)
+                    .unwrap_or(0);
+                self.modal = Some(Modal::FilterSelect { selected_index });
+            }
+            Action::FilterDialogMove(delta) => {
+                if let Some(Modal::FilterSelect { selected_index }) = &mut self.modal {
+                    let len = FILTER_OPTIONS.len();
+                    *selected_index = ((*selected_index as isize + delta as isize)
+                        .rem_euclid(len as isize)) as usize;
+                }
+            }
+            Action::FilterDialogConfirm => {
+                if let Some(Modal::FilterSelect { selected_index }) = &self.modal {
+                    self.dashboard_filter = FILTER_OPTIONS[*selected_index];
+                    self.rebuild_dashboard_rows();
+                }
+                self.modal = None;
+            }
+            Action::FilterDialogCancel => {
+                self.modal = None;
             }
             _ => {}
         }
@@ -184,7 +211,7 @@ impl App {
         match &self.modal {
             Some(Modal::QuitConfirm) => self.handle_quit_confirm_key(code),
             Some(Modal::TaskCreate { .. }) => self.handle_task_form_key(code, modifiers),
-            Some(Modal::FilterSelect { .. }) => {} // handled in lib.rs key dispatch (Task 4)
+            Some(Modal::FilterSelect { .. }) => self.handle_filter_select_key(code),
             None => {}
         }
     }
@@ -199,6 +226,17 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn handle_filter_select_key(&mut self, code: KeyCode) {
+        let action = match code {
+            KeyCode::Char('j') | KeyCode::Down => Action::FilterDialogMove(1),
+            KeyCode::Char('k') | KeyCode::Up => Action::FilterDialogMove(-1),
+            KeyCode::Enter => Action::FilterDialogConfirm,
+            KeyCode::Esc | KeyCode::Char('q') => Action::FilterDialogCancel,
+            _ => return,
+        };
+        self.apply_action(action);
     }
 
     fn handle_task_form_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
@@ -658,13 +696,3 @@ impl App {
     }
 }
 
-fn next_status_filter(current: Option<Status>) -> Option<Status> {
-    match current {
-        None => Some(Status::Todo),
-        Some(Status::Todo) => Some(Status::InProgress),
-        Some(Status::InProgress) => Some(Status::Blocked),
-        Some(Status::Blocked) => Some(Status::Done),
-        Some(Status::Done) => Some(Status::Cancelled),
-        Some(Status::Cancelled) => None,
-    }
-}
