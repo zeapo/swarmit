@@ -36,7 +36,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                 let sort_label = app.dashboard_sort.label();
                 (
                     format!("Dashboard [{}] [{}]", filter_label, sort_label),
-                    "j/k:move  Enter:open  Space:expand  f:filter  s:sort  n:new  1:dashboard  2:activity  ?:help  q:quit",
+                    "j/k:move  Enter:open  Space:expand  f:filter  s:sort  n:new  b:board  1:dashboard  2:activity  ?:help  q:quit",
                 )
             }
             Screen::Board { .. } => (
