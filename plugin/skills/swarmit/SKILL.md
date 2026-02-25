@@ -54,13 +54,61 @@ Loop back to step 1.
 | `swarmit task show TASK-007` | Full task detail with relationships & comments |
 | `swarmit task claim TASK-007 --agent me` | Claim a task |
 | `swarmit task done TASK-007 --agent me` | Mark task complete |
-| `swarmit task create --title "..." --epic EPIC-001 --agent me` | Create task |
+| `swarmit task create --title "..." --description "..." --epic EPIC-001 --agent me` | Create task |
 | `swarmit epic list --json` | List epics |
 | `swarmit epic show EPIC-001` | Epic details |
 | `swarmit link add --from TASK-001 --to TASK-002 --type blocks --agent me` | Add relationship |
 | `swarmit comment add TASK-007 --body "..." --agent me` | Add comment |
 | `swarmit log --tail 20` | Recent operations |
 | `swarmit compact --agent me` | Compact log |
+
+---
+
+## Creating Tasks from a Plan
+
+When creating tasks from an implementation plan, **always populate `--description` with the full plan task body** — every step, file path, command, and expected output. The title alone is not enough; future agents claiming the task must not need to re-read the plan file.
+
+```bash
+swarmit task create \
+  --title "Add OAuth login endpoint" \
+  --description "Files:
+- Create: src/auth/oauth.rs
+- Modify: src/routes.rs:45-60
+
+Step 1: Write failing test
+  cargo test auth::oauth::test_login_redirect -- expected FAIL
+
+Step 2: Implement minimal handler
+  Add OAuthHandler struct with redirect() method
+
+Step 3: Run tests - expect PASS
+  cargo test auth::oauth
+
+Step 4: Commit
+  git add src/auth/oauth.rs src/routes.rs
+  git commit -m 'feat: add OAuth login endpoint'" \
+  --agent me
+```
+
+**Rule:** `--description` = complete plan task text, verbatim. Never summarize.
+
+---
+
+## Keeping Status Up to Date
+
+Status updates are visible in the TUI and to all other agents — keep them accurate.
+
+**When you start a task:**
+```bash
+swarmit task claim TASK-NNN --agent me
+```
+
+**When you finish a task:**
+```bash
+swarmit task done TASK-NNN --agent me
+```
+
+Never leave a task claimed but unfinished without a comment explaining why. Never mark a task done before its work is complete and verified.
 
 ---
 
