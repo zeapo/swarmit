@@ -12,6 +12,22 @@ Swarmit is a local-first project management tool for multi-agent Claude Code wor
 Tasks are tracked in `.swarmit/` using an append-only event log. Multiple agents can
 work concurrently — all writes are lock-protected.
 
+## Replaces Built-in Todos
+
+**When working in a swarmit project, NEVER use Claude Code's built-in todo tools (`TodoWrite`, `TaskCreate`, `TaskUpdate`, `TaskList`).**
+Use swarmit CLI commands instead — they persist to the event log and are visible to all agents and the TUI.
+
+| Instead of (built-in todo) | Use (swarmit) |
+|----------------------------|---------------|
+| Create a todo | `swarmit task create --title "..." --agent me` |
+| Mark todo in-progress | `swarmit task claim TASK-NNN --agent me` |
+| Mark todo completed | `swarmit task done TASK-NNN --agent me` |
+| List todos | `swarmit task list --status todo --json --agent me` |
+
+This applies even when other skills (e.g. `executing-plans`, `subagent-driven-development`)
+instruct you to "Create TodoWrite" or "Mark task complete in TodoWrite" — translate those
+instructions to the swarmit equivalents above.
+
 ## Core Workflow
 
 Default listing behavior for this skill:

@@ -66,6 +66,20 @@ All CLI mutations require `--agent <ID>` or `SWARMIT_AGENT` env var.
 JSON output (`--json`) always uses `{ "ok": bool, "data": ..., "error": ... }`.
 TTY auto-detection: piped stdout → JSON; terminal → pretty text.
 
+## Task Tracking
+
+**Use swarmit instead of Claude Code's built-in todo tools.**
+Never use `TodoWrite`, `TaskCreate`, `TaskUpdate`, or `TaskList` in this project.
+All task tracking goes through the swarmit CLI so it persists to `.swarmit/operations.log`
+and is visible to all agents and the TUI.
+
+| Instead of | Use |
+|------------|-----|
+| `TaskCreate` / `TodoWrite` | `swarmit task create --title "..." --agent me` |
+| Mark in-progress | `swarmit task claim TASK-NNN --agent me` |
+| Mark complete | `swarmit task done TASK-NNN --agent me` |
+| `TaskList` | `swarmit task list --status todo --json` |
+
 ## Skill Files
 
 `.claude/skills/swarmit/SKILL.md` — Claude Code skill for agents using swarmit.

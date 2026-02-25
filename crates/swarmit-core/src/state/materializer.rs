@@ -160,6 +160,14 @@ impl ProjectState {
                 epic_id,
                 assignee,
             } => {
+                // Capture old epic before mutating, so we can update task_ids.
+                let old_epic_id = if epic_id.is_some() {
+                    self.tasks.get(&id).and_then(|t| t.epic_id.clone())
+                } else {
+                    None
+                };
+                let new_epic_id: Option<Option<ItemId>> = epic_id.clone();
+
                 let task = self
                     .tasks
                     .get_mut(&id)
@@ -180,6 +188,30 @@ impl ProjectState {
                     task.assignee = a;
                 }
                 task.updated_at = op.timestamp;
+
+                // Keep epic.task_ids in sync when the task's epic changes.
+                if let Some(new_eid_opt) = new_epic_id {
+                    // Remove from old epic's task list.
+                    if let Some(old_eid) = old_epic_id {
+                        if let Some(epic) = self.epics.get_mut(&old_eid) {
+                            epic.task_ids.retain(|tid| tid != &id);
+                        }
+                    }
+                    // Add to new epic's task list.
+                    if let Some(new_eid) = &new_eid_opt {
+                        if let Some(epic) = self.epics.get_mut(new_eid) {
+                            if !epic.task_ids.contains(&id) {
+                                epic.task_ids.push(id.clone());
+                            }
+                            // Re-open a Done epic, same as CreateTask.
+                            if epic.status == Status::Done {
+                                epic.status = Status::InProgress;
+                                epic.updated_at = op.timestamp;
+                            }
+                        }
+                        self.check_epic_completion(new_eid, op.timestamp);
+                    }
+                }
             }
 
             OperationKind::UpdateTaskStatus { id, status } => {
@@ -635,6 +667,51 @@ mod tests {
             .unwrap();
 
         assert_eq!(state.epics[&epic_id].status, Status::Todo);
+    }
+
+    #[test]
+    fn update_task_epic_syncs_task_ids_and_auto_closes() {
+        // Tasks created without an epic, then retroactively assigned to one that
+        // should auto-close because all tasks are already Done.
+        let mut state = ProjectState::new();
+        let epic_id: ItemId = "EPIC-001".parse().unwrap();
+        state
+            .apply(op(OperationKind::CreateEpic {
+                id: epic_id.clone(),
+                title: "Epic".to_string(),
+                description: None,
+                priority: Priority::Medium,
+            }))
+            .unwrap();
+
+        let task_id: ItemId = "TASK-001".parse().unwrap();
+        state
+            .apply(op(OperationKind::CreateTask {
+                id: task_id.clone(),
+                title: "Task".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            }))
+            .unwrap();
+        state
+            .apply(op(OperationKind::CompleteTask { id: task_id.clone() }))
+            .unwrap();
+
+        // Assign the already-Done task to the epic via UpdateTask.
+        state
+            .apply(op(OperationKind::UpdateTask {
+                id: task_id.clone(),
+                title: None,
+                description: None,
+                priority: None,
+                epic_id: Some(Some(epic_id.clone())),
+                assignee: None,
+            }))
+            .unwrap();
+
+        assert!(state.epics[&epic_id].task_ids.contains(&task_id));
+        assert_eq!(state.epics[&epic_id].status, Status::Done);
     }
 
     #[test]
