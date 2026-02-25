@@ -99,7 +99,7 @@ fn run_loop(
                     components::help::render(f, &app.theme, main_area);
                 }
                 Screen::GlobalBoard => {
-                    components::dashboard::render(f, app, main_area);
+                    components::global_board::render(f, app, main_area);
                 }
             }
 
@@ -154,10 +154,13 @@ fn key_to_action(code: KeyCode, _modifiers: KeyModifiers, screen: &Screen) -> Ac
         KeyCode::Char('k') | KeyCode::Up => Action::Up,
         KeyCode::Enter => Action::Select,
         KeyCode::Char(' ') if matches!(screen, Screen::Dashboard) => Action::ToggleCollapse,
+        KeyCode::Char('b') if matches!(screen, Screen::Dashboard) => Action::GotoGlobalBoard,
         KeyCode::Char('h') if matches!(screen, Screen::Dashboard) => Action::CollapseEpic,
         KeyCode::Char('l') if matches!(screen, Screen::Dashboard) => Action::ExpandEpic,
         KeyCode::Char('f') if matches!(screen, Screen::Dashboard) => Action::OpenFilterDialog,
         KeyCode::Char('s') if matches!(screen, Screen::Dashboard) => Action::OpenSortDialog,
+        KeyCode::Char('h') if matches!(screen, Screen::GlobalBoard) => Action::ColLeft,
+        KeyCode::Char('l') if matches!(screen, Screen::GlobalBoard) => Action::ColRight,
         KeyCode::Esc => Action::Back,
         KeyCode::Char('?') => Action::Help,
         KeyCode::Char('/') => Action::Search,

@@ -177,6 +177,31 @@ impl App {
                 self.selected_column = 0;
                 self.navigate_to(Screen::Activity);
             }
+            Action::GotoGlobalBoard => {
+                self.screen = Screen::GlobalBoard;
+                self.selected_index = 0;
+                self.selected_column = 0;
+            }
+            Action::ColLeft => {
+                self.selected_column = self.selected_column.saturating_sub(1);
+                let count = self.tasks_in_column(self.selected_column);
+                if count == 0 {
+                    self.selected_index = 0;
+                } else {
+                    self.selected_index = self.selected_index.min(count - 1);
+                }
+            }
+            Action::ColRight => {
+                if self.selected_column < 3 {
+                    self.selected_column += 1;
+                }
+                let count = self.tasks_in_column(self.selected_column);
+                if count == 0 {
+                    self.selected_index = 0;
+                } else {
+                    self.selected_index = self.selected_index.min(count - 1);
+                }
+            }
             Action::Help => {
                 self.navigate_to(Screen::Help);
             }
@@ -774,6 +799,23 @@ impl App {
                     });
                 }
             }
+            Screen::GlobalBoard => {
+                const STATUSES: [Status; 4] =
+                    [Status::Todo, Status::InProgress, Status::Done, Status::Blocked];
+                let col_status = STATUSES[self.selected_column];
+                let tasks: Vec<_> = self
+                    .state
+                    .tasks
+                    .values()
+                    .filter(|t| t.status == col_status)
+                    .map(|t| t.id.clone())
+                    .collect();
+                if let Some(task_id) = tasks.get(self.selected_index) {
+                    self.navigate_to(Screen::TaskDetail {
+                        task_id: task_id.clone(),
+                    });
+                }
+            }
             _ => {}
         }
     }
@@ -791,8 +833,17 @@ impl App {
                 // Show up to 200 recent operations — list length for scrolling
                 200
             }
+            Screen::GlobalBoard => self.tasks_in_column(self.selected_column),
             _ => 0,
         }
+    }
+
+    /// Returns the number of tasks with the status corresponding to `col`.
+    /// Column indices: 0=Todo, 1=InProgress, 2=Done, 3=Blocked.
+    pub fn tasks_in_column(&self, col: usize) -> usize {
+        const STATUSES: [Status; 4] =
+            [Status::Todo, Status::InProgress, Status::Done, Status::Blocked];
+        self.state.tasks.values().filter(|t| t.status == STATUSES[col]).count()
     }
 
     /// Poll the file watcher channel and apply any new operations.
