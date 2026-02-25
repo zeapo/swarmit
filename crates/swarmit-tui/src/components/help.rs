@@ -20,7 +20,7 @@ pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
         ("k / ↑", "Move up"),
         ("Enter", "Select / drill into item"),
         ("Space", "Expand/collapse epic (Dashboard)"),
-        ("f", "Cycle status filter (Dashboard)"),
+        ("f", "Open filter dialog (Dashboard)"),
         ("Esc", "Go back"),
         ("1", "Jump to Dashboard"),
         ("2", "Jump to Activity"),
