@@ -5,6 +5,7 @@ use swarmit_core::events::log::append_operation;
 use swarmit_core::events::locking::try_append_with_timeout;
 use swarmit_core::events::operations::{Operation, OperationKind};
 use swarmit_core::models::{AgentId, ItemId, Priority, Status};
+use swarmit_core::state::markdown;
 use swarmit_core::state::ProjectState;
 
 use crate::output::{print_json_ok, OutputMode};
@@ -121,6 +122,14 @@ fn create(args: &EpicCreateArgs, cli: &Cli) -> Result<()> {
         append_operation(&log_path, &op)
     })
     .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let state_dir = swarmit.join("state");
+    let post_state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    if let Some(epic) = post_state.epics.get(&next_id) {
+        let tasks = post_state.tasks_for_epic(&next_id);
+        markdown::materialize_epic(&state_dir, epic, &tasks)
+            .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
+    }
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -294,6 +303,14 @@ fn update(args: &EpicUpdateArgs, cli: &Cli) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     }
 
+    let state_dir = swarmit.join("state");
+    let post_state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    if let Some(epic) = post_state.epics.get(&id) {
+        let tasks = post_state.tasks_for_epic(&id);
+        markdown::materialize_epic(&state_dir, epic, &tasks)
+            .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
+    }
+
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
         OutputMode::Json => print_json_ok(serde_json::json!({ "id": id.to_string() })),
@@ -312,10 +329,20 @@ fn delete(args: &EpicDeleteArgs, cli: &Cli) -> Result<()> {
     let lock_path = swarmit.join("operations.lock");
 
     let id: ItemId = args.id.parse().map_err(|e: swarmit_core::SwarmitError| anyhow::anyhow!("{}", e))?;
+
+    let pre_state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let pre_epic = pre_state.epics.get(&id).cloned();
+
     let op = Operation::new(agent, OperationKind::DeleteEpic { id: id.clone() });
 
     try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
         .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let state_dir = swarmit.join("state");
+    if let Some(epic) = &pre_epic {
+        markdown::remove_epic(&state_dir, epic)
+            .map_err(|e| anyhow::anyhow!("Failed to remove markdown: {}", e))?;
+    }
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {

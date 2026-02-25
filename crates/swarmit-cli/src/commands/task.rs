@@ -5,6 +5,7 @@ use swarmit_core::events::log::append_operation;
 use swarmit_core::events::locking::try_append_with_timeout;
 use swarmit_core::events::operations::{Operation, OperationKind};
 use swarmit_core::models::{AgentId, ItemId};
+use swarmit_core::state::markdown;
 use swarmit_core::state::ProjectState;
 
 use crate::output::{print_json_ok, OutputMode};
@@ -101,6 +102,27 @@ pub struct TaskDoneArgs {
     pub agent: Option<String>,
 }
 
+/// Re-reads post-write state and materializes the task's markdown file.
+fn materialize_task(state_dir: &std::path::Path, log_path: &std::path::Path, task_id: &ItemId) -> Result<()> {
+    let state = ProjectState::from_log(log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    if let Some(task) = state.tasks.get(task_id) {
+        match &task.epic_id {
+            Some(eid) => {
+                if let Some(epic) = state.epics.get(eid) {
+                    let tasks = state.tasks_for_epic(eid);
+                    markdown::materialize_epic(state_dir, epic, &tasks)
+                        .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
+                }
+            }
+            None => {
+                markdown::materialize_backlog_task(state_dir, task)
+                    .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn run(args: &TaskArgs, cli: &Cli) -> Result<()> {
     match &args.command {
         TaskCommands::Create(a) => create(a, cli),
@@ -154,6 +176,9 @@ fn create(args: &TaskCreateArgs, cli: &Cli) -> Result<()> {
 
     try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
         .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let state_dir = swarmit.join("state");
+    materialize_task(&state_dir, &log_path, &next_id)?;
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -336,6 +361,7 @@ fn update(args: &TaskUpdateArgs, cli: &Cli) -> Result<()> {
     if !state.tasks.contains_key(&id) {
         anyhow::bail!("Task not found: {}", id);
     }
+    let pre_epic_id = state.tasks.get(&id).and_then(|t| t.epic_id.clone());
 
     let priority = args.priority.as_deref().map(parse_priority).transpose()?;
     let epic_id = args
@@ -380,6 +406,24 @@ fn update(args: &TaskUpdateArgs, cli: &Cli) -> Result<()> {
     })
     .map_err(|e| anyhow::anyhow!("{}", e))?;
 
+    let state_dir = swarmit.join("state");
+    let post_state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let post_epic_id = post_state.tasks.get(&id).and_then(|t| t.epic_id.clone());
+    // If task moved epics, clean up the stale file in the old epic directory
+    if pre_epic_id != post_epic_id {
+        if let Some(old_eid) = &pre_epic_id {
+            if let Some(old_epic) = state.epics.get(old_eid) {
+                markdown::remove_task_file(&state_dir, &id, Some(old_epic))
+                    .map_err(|e| anyhow::anyhow!("Failed to remove stale markdown: {}", e))?;
+                // Re-materialize old epic so its directory reflects the removed task
+                let old_tasks = post_state.tasks_for_epic(old_eid);
+                markdown::materialize_epic(&state_dir, old_epic, &old_tasks)
+                    .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
+            }
+        }
+    }
+    materialize_task(&state_dir, &log_path, &id)?;
+
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
         OutputMode::Json => print_json_ok(serde_json::json!({ "id": id.to_string() })),
@@ -398,10 +442,23 @@ fn delete(args: &TaskDeleteArgs, cli: &Cli) -> Result<()> {
     let lock_path = swarmit.join("operations.lock");
 
     let id: ItemId = args.id.parse().map_err(|e: swarmit_core::SwarmitError| anyhow::anyhow!("{}", e))?;
+
+    let pre_state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let pre_epic = pre_state
+        .tasks
+        .get(&id)
+        .and_then(|t| t.epic_id.as_ref())
+        .and_then(|eid| pre_state.epics.get(eid))
+        .cloned();
+
     let op = Operation::new(agent, OperationKind::DeleteTask { id: id.clone() });
 
     try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
         .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let state_dir = swarmit.join("state");
+    markdown::remove_task_file(&state_dir, &id, pre_epic.as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to remove markdown: {}", e))?;
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -426,6 +483,9 @@ fn claim(args: &TaskClaimArgs, cli: &Cli) -> Result<()> {
     try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
+    let state_dir = swarmit.join("state");
+    materialize_task(&state_dir, &log_path, &id)?;
+
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
         OutputMode::Json => print_json_ok(serde_json::json!({ "id": id.to_string(), "claimed": true })),
@@ -448,6 +508,9 @@ fn done(args: &TaskDoneArgs, cli: &Cli) -> Result<()> {
 
     try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
         .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let state_dir = swarmit.join("state");
+    materialize_task(&state_dir, &log_path, &id)?;
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
