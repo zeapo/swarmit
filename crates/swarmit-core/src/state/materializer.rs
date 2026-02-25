@@ -139,10 +139,14 @@ impl ProjectState {
                         self.task_seq = n;
                     }
                 }
-                // Add task to epic's task list
+                // Add task to epic's task list; re-open a Done epic
                 if let Some(eid) = &epic_id {
                     if let Some(epic) = self.epics.get_mut(eid) {
                         epic.task_ids.push(id.clone());
+                        if epic.status == Status::Done {
+                            epic.status = Status::InProgress;
+                            epic.updated_at = op.timestamp;
+                        }
                     }
                 }
                 self.tasks.insert(id, task);
@@ -199,27 +203,39 @@ impl ProjectState {
             }
 
             OperationKind::CompleteTask { id } => {
-                let task = self
-                    .tasks
-                    .get_mut(&id)
-                    .ok_or_else(|| SwarmitError::NotFound(id.clone()))?;
-                task.status = Status::Done;
-                task.completed_at = Some(op.timestamp);
-                task.updated_at = op.timestamp;
+                let epic_id = {
+                    let task = self
+                        .tasks
+                        .get_mut(&id)
+                        .ok_or_else(|| SwarmitError::NotFound(id.clone()))?;
+                    task.status = Status::Done;
+                    task.completed_at = Some(op.timestamp);
+                    task.updated_at = op.timestamp;
+                    task.epic_id.clone()
+                };
+                if let Some(eid) = epic_id {
+                    self.check_epic_completion(&eid, op.timestamp);
+                }
             }
 
             OperationKind::DeleteTask { id } => {
-                if let Some(task) = self.tasks.remove(&id) {
+                let epic_id = if let Some(task) = self.tasks.remove(&id) {
                     // Remove from epic task list
                     if let Some(eid) = &task.epic_id {
                         if let Some(epic) = self.epics.get_mut(eid) {
                             epic.task_ids.retain(|tid| tid != &id);
                         }
                     }
-                }
+                    task.epic_id.clone()
+                } else {
+                    None
+                };
                 // Remove all relationships involving this task
                 self.relationships
                     .retain(|r| r.from != id && r.to != id);
+                if let Some(eid) = epic_id {
+                    self.check_epic_completion(&eid, op.timestamp);
+                }
             }
 
             OperationKind::AddRelationship {
@@ -262,6 +278,26 @@ impl ProjectState {
         }
 
         Ok(())
+    }
+
+    /// Auto-transitions an epic to Done if it has tasks and all of them are Done.
+    fn check_epic_completion(&mut self, epic_id: &ItemId, timestamp: chrono::DateTime<chrono::Utc>) {
+        let Some(epic) = self.epics.get(epic_id) else {
+            return;
+        };
+        if epic.task_ids.is_empty() {
+            return;
+        }
+        let all_done = epic
+            .task_ids
+            .iter()
+            .all(|tid| self.tasks.get(tid).map_or(false, |t| t.status == Status::Done));
+        if all_done {
+            if let Some(epic) = self.epics.get_mut(epic_id) {
+                epic.status = Status::Done;
+                epic.updated_at = timestamp;
+            }
+        }
     }
 
     /// Returns all relationships involving a given item (from or to).
@@ -471,6 +507,166 @@ mod tests {
 
         assert_eq!(state.comments_for(&task_id).len(), 1);
         assert_eq!(state.comments_for(&task_id)[0].body, "Great work!");
+    }
+
+    // ── Auto epic status transition tests ────────────────────────────────
+
+    fn make_epic_with_tasks(state: &mut ProjectState, task_ids: &[&str]) -> (ItemId, Vec<ItemId>) {
+        let epic_id: ItemId = "EPIC-001".parse().unwrap();
+        state
+            .apply(op(OperationKind::CreateEpic {
+                id: epic_id.clone(),
+                title: "Epic".to_string(),
+                description: None,
+                priority: Priority::Medium,
+            }))
+            .unwrap();
+        let mut ids = Vec::new();
+        for raw in task_ids {
+            let tid: ItemId = raw.parse().unwrap();
+            state
+                .apply(op(OperationKind::CreateTask {
+                    id: tid.clone(),
+                    title: "Task".to_string(),
+                    description: None,
+                    priority: Priority::Medium,
+                    epic_id: Some(epic_id.clone()),
+                }))
+                .unwrap();
+            ids.push(tid);
+        }
+        (epic_id, ids)
+    }
+
+    #[test]
+    fn complete_all_tasks_auto_closes_epic() {
+        let mut state = ProjectState::new();
+        let (epic_id, task_ids) =
+            make_epic_with_tasks(&mut state, &["TASK-001", "TASK-002"]);
+
+        for tid in &task_ids {
+            state
+                .apply(op(OperationKind::CompleteTask { id: tid.clone() }))
+                .unwrap();
+        }
+
+        assert_eq!(state.epics[&epic_id].status, Status::Done);
+    }
+
+    #[test]
+    fn partial_completion_does_not_close_epic() {
+        let mut state = ProjectState::new();
+        let (epic_id, task_ids) =
+            make_epic_with_tasks(&mut state, &["TASK-001", "TASK-002"]);
+
+        // Complete only the first task
+        state
+            .apply(op(OperationKind::CompleteTask {
+                id: task_ids[0].clone(),
+            }))
+            .unwrap();
+
+        assert_ne!(state.epics[&epic_id].status, Status::Done);
+    }
+
+    #[test]
+    fn delete_last_non_done_task_closes_epic() {
+        let mut state = ProjectState::new();
+        let (epic_id, task_ids) =
+            make_epic_with_tasks(&mut state, &["TASK-001", "TASK-002"]);
+
+        // Complete the first task, then delete the second
+        state
+            .apply(op(OperationKind::CompleteTask {
+                id: task_ids[0].clone(),
+            }))
+            .unwrap();
+        state
+            .apply(op(OperationKind::DeleteTask {
+                id: task_ids[1].clone(),
+            }))
+            .unwrap();
+
+        assert_eq!(state.epics[&epic_id].status, Status::Done);
+    }
+
+    #[test]
+    fn add_task_to_done_epic_reopens_it() {
+        let mut state = ProjectState::new();
+        let (epic_id, task_ids) =
+            make_epic_with_tasks(&mut state, &["TASK-001"]);
+
+        state
+            .apply(op(OperationKind::CompleteTask {
+                id: task_ids[0].clone(),
+            }))
+            .unwrap();
+        assert_eq!(state.epics[&epic_id].status, Status::Done);
+
+        let new_task: ItemId = "TASK-002".parse().unwrap();
+        state
+            .apply(op(OperationKind::CreateTask {
+                id: new_task,
+                title: "New task".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: Some(epic_id.clone()),
+            }))
+            .unwrap();
+
+        assert_eq!(state.epics[&epic_id].status, Status::InProgress);
+    }
+
+    #[test]
+    fn add_task_to_non_done_epic_leaves_status_unchanged() {
+        let mut state = ProjectState::new();
+        let (epic_id, _) = make_epic_with_tasks(&mut state, &["TASK-001"]);
+
+        let new_task: ItemId = "TASK-002".parse().unwrap();
+        state
+            .apply(op(OperationKind::CreateTask {
+                id: new_task,
+                title: "New task".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: Some(epic_id.clone()),
+            }))
+            .unwrap();
+
+        assert_eq!(state.epics[&epic_id].status, Status::Todo);
+    }
+
+    #[test]
+    fn empty_epic_stays_unchanged_on_complete() {
+        let mut state = ProjectState::new();
+        let epic_id: ItemId = "EPIC-001".parse().unwrap();
+        state
+            .apply(op(OperationKind::CreateEpic {
+                id: epic_id.clone(),
+                title: "Empty Epic".to_string(),
+                description: None,
+                priority: Priority::Medium,
+            }))
+            .unwrap();
+
+        // Create and complete a standalone task (no epic)
+        let task_id: ItemId = "TASK-001".parse().unwrap();
+        state
+            .apply(op(OperationKind::CreateTask {
+                id: task_id.clone(),
+                title: "Standalone".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            }))
+            .unwrap();
+        state
+            .apply(op(OperationKind::CompleteTask {
+                id: task_id,
+            }))
+            .unwrap();
+
+        assert_eq!(state.epics[&epic_id].status, Status::Todo);
     }
 
     #[test]
