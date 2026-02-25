@@ -1,0 +1,47 @@
+[workspace]
+members = [
+    "crates/swarmit-core",
+    "crates/swarmit-cli",
+    "crates/swarmit-tui",
+    "crates/swarmit",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Swarmit Contributors"]
+license = "MIT"
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# File locking
+fd-lock = "4"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+notify-debouncer-mini = "0.4"
+
+# Async
+tokio = { version = "1", features = ["full"] }
+
+# Internal
+swarmit-core = { path = "crates/swarmit-core" }
+swarmit-cli = { path = "crates/swarmit-cli" }
+swarmit-tui = { path = "crates/swarmit-tui" }

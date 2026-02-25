@@ -1,0 +1,17 @@
+[package]
+name = "swarmit-cli"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+swarmit-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

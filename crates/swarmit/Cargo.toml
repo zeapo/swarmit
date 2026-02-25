@@ -1,0 +1,15 @@
+[package]
+name = "swarmit"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "swarmit"
+path = "src/main.rs"
+
+[dependencies]
+swarmit-core = { workspace = true }
+swarmit-cli = { workspace = true }
+swarmit-tui = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
