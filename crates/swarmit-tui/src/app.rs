@@ -1245,5 +1245,111 @@ mod tests {
         // Tasks under epic should remain in creation order (task_id1 before task_id2)
         assert_eq!(task_rows, vec![&task_id1, &task_id2]);
     }
+
+    // ── GlobalBoard tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn goto_global_board_sets_screen_and_resets_indices() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+        app.handle_action(Action::GotoGlobalBoard);
+        assert_eq!(app.screen, Screen::GlobalBoard);
+        assert_eq!(app.selected_index, 0);
+        assert_eq!(app.selected_column, 0);
+    }
+
+    #[test]
+    fn col_right_increments_column_and_col_left_decrements() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+        app.screen = Screen::GlobalBoard;
+        app.handle_action(Action::ColRight);
+        assert_eq!(app.selected_column, 1);
+        app.handle_action(Action::ColLeft);
+        assert_eq!(app.selected_column, 0);
+    }
+
+    #[test]
+    fn col_left_at_zero_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+        app.screen = Screen::GlobalBoard;
+        app.selected_column = 0;
+        app.handle_action(Action::ColLeft);
+        assert_eq!(app.selected_column, 0);
+    }
+
+    #[test]
+    fn col_right_at_three_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+        app.screen = Screen::GlobalBoard;
+        app.selected_column = 3;
+        app.handle_action(Action::ColRight);
+        assert_eq!(app.selected_column, 3);
+    }
+
+    #[test]
+    fn col_right_clamps_selected_index_to_new_column_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+        // Create 2 Todo tasks + 1 InProgress task
+        for i in 1..=3 {
+            let _ = app.state.apply(Operation::new(
+                make_agent(),
+                OperationKind::CreateTask {
+                    id: ItemId::new("TASK", i),
+                    title: format!("Task {}", i),
+                    description: None,
+                    priority: Priority::Medium,
+                    epic_id: None,
+                },
+            ));
+        }
+        let _ = app.state.apply(Operation::new(
+            make_agent(),
+            OperationKind::UpdateTaskStatus {
+                id: ItemId::new("TASK", 1),
+                status: Status::InProgress,
+            },
+        ));
+        // 2 Todo tasks remain; 1 InProgress
+        app.screen = Screen::GlobalBoard;
+        app.selected_column = 0; // Todo column
+        app.selected_index = 1;  // last Todo task
+        app.handle_action(Action::ColRight); // move to InProgress (1 task)
+        assert_eq!(app.selected_column, 1);
+        assert_eq!(app.selected_index, 0); // clamped from 1 → 0
+    }
+
+    #[test]
+    fn tasks_in_column_returns_correct_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+        for i in 1..=3 {
+            let _ = app.state.apply(Operation::new(
+                make_agent(),
+                OperationKind::CreateTask {
+                    id: ItemId::new("TASK", i),
+                    title: format!("Task {}", i),
+                    description: None,
+                    priority: Priority::Medium,
+                    epic_id: None,
+                },
+            ));
+        }
+        assert_eq!(app.tasks_in_column(0), 3); // Todo
+        assert_eq!(app.tasks_in_column(1), 0); // InProgress
+    }
+
+    #[test]
+    fn go_back_from_global_board_returns_to_dashboard() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+        app.handle_action(Action::GotoGlobalBoard);
+        assert_eq!(app.screen, Screen::GlobalBoard);
+        app.handle_action(Action::Back);
+        assert_eq!(app.screen, Screen::Dashboard);
+    }
 }
 
