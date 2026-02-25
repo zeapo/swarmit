@@ -5,6 +5,7 @@ use swarmit_core::models::ItemId;
 pub enum Screen {
     Dashboard,
     Board { epic_id: ItemId },
+    GlobalBoard,
     TaskDetail { task_id: ItemId },
     Activity,
     Help,
@@ -26,6 +27,9 @@ pub enum Action {
     ChangeStatus,
     GotoDashboard,
     GotoActivity,
+    GotoGlobalBoard,
+    ColLeft,
+    ColRight,
     Refresh,
     ToggleCollapse,
     CollapseEpic,

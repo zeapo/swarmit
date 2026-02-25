@@ -45,6 +45,10 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
             ),
             Screen::TaskDetail { .. } => ("Task Detail".to_string(), "Esc:back  c:claim  s:status  ?:help"),
             Screen::Activity => ("Activity".to_string(), "j/k:scroll  Esc:back  ?:help"),
+            Screen::GlobalBoard => (
+                "Global Board".to_string(),
+                "j/k:move  h/l:col  Esc:back  ?:help",
+            ),
             Screen::Help => ("Help".to_string(), "Esc:close"),
         }
     };

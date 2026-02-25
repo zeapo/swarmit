@@ -98,6 +98,9 @@ fn run_loop(
                     components::dashboard::render(f, app, main_area);
                     components::help::render(f, &app.theme, main_area);
                 }
+                Screen::GlobalBoard => {
+                    components::dashboard::render(f, app, main_area);
+                }
             }
 
             // Render modal overlay (if any) on top of the current screen
