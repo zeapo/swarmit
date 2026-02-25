@@ -13,3 +13,6 @@ notify = { workspace = true }
 anyhow = { workspace = true }
 catppuccin = { workspace = true }
 terminal-colorsaurus = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

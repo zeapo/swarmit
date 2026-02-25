@@ -696,3 +696,57 @@ impl App {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::Theme;
+    use swarmit_core::models::Status;
+
+    #[test]
+    fn filter_dialog_opens_with_current_filter_preselected() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+        app.dashboard_filter = Some(Status::InProgress);
+        app.apply_action(Action::OpenFilterDialog);
+        // InProgress is index 2 in FILTER_OPTIONS
+        assert!(matches!(
+            app.modal,
+            Some(Modal::FilterSelect { selected_index: 2 })
+        ));
+    }
+
+    #[test]
+    fn filter_dialog_wraps_navigation_down_to_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+        app.modal = Some(Modal::FilterSelect { selected_index: 0 });
+        app.apply_action(Action::FilterDialogMove(-1));
+        let last = FILTER_OPTIONS.len() - 1;
+        assert!(matches!(
+            app.modal,
+            Some(Modal::FilterSelect { selected_index }) if selected_index == last
+        ));
+    }
+
+    #[test]
+    fn filter_dialog_confirm_sets_filter_and_closes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+        app.modal = Some(Modal::FilterSelect { selected_index: 1 }); // Todo
+        app.apply_action(Action::FilterDialogConfirm);
+        assert_eq!(app.dashboard_filter, Some(Status::Todo));
+        assert!(app.modal.is_none());
+    }
+
+    #[test]
+    fn filter_dialog_cancel_does_not_change_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+        app.dashboard_filter = Some(Status::Done);
+        app.modal = Some(Modal::FilterSelect { selected_index: 0 });
+        app.apply_action(Action::FilterDialogCancel);
+        assert_eq!(app.dashboard_filter, Some(Status::Done));
+        assert!(app.modal.is_none());
+    }
+}
+
