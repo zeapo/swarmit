@@ -22,14 +22,6 @@ pub fn materialize_backlog_task(state_dir: &Path, task: &Task) -> Result<()> {
     Ok(())
 }
 
-/// Writes a done/cancelled backlog task to the archive directory.
-pub fn materialize_archived_task(state_dir: &Path, task: &Task) -> Result<()> {
-    let archive_dir = state_dir.join("archive");
-    fs::create_dir_all(&archive_dir)?;
-    write_task_file(&archive_dir, task)?;
-    Ok(())
-}
-
 /// Removes an epic's directory and all markdown files within it.
 pub fn remove_epic(state_dir: &Path, epic: &Epic) -> Result<()> {
     let dir = epic_dir_path(state_dir, epic);
@@ -39,24 +31,15 @@ pub fn remove_epic(state_dir: &Path, epic: &Epic) -> Result<()> {
     Ok(())
 }
 
-/// Removes a single task's markdown file from its location (epic dir, backlog, or archive).
+/// Removes a single task's markdown file from its location (epic dir or backlog).
 pub fn remove_task_file(state_dir: &Path, task_id: &ItemId, epic: Option<&Epic>) -> Result<()> {
-    match epic {
-        Some(e) => {
-            let path = epic_dir_path(state_dir, e).join(format!("{}.md", task_id));
-            if path.exists() {
-                fs::remove_file(path)?;
-            }
-        }
-        None => {
-            // Could be in backlog/ or archive/ — clean up both
-            for dir_name in ["backlog", "archive"] {
-                let path = state_dir.join(dir_name).join(format!("{}.md", task_id));
-                if path.exists() {
-                    fs::remove_file(path)?;
-                }
-            }
-        }
+    let dir = match epic {
+        Some(e) => epic_dir_path(state_dir, e),
+        None => state_dir.join("backlog"),
+    };
+    let path = dir.join(format!("{}.md", task_id));
+    if path.exists() {
+        fs::remove_file(path)?;
     }
     Ok(())
 }

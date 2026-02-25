@@ -29,6 +29,7 @@ pub enum Action {
     GotoActivity,
     Refresh,
     ToggleCollapse,
+    CycleFilter,
     None,
 }
 

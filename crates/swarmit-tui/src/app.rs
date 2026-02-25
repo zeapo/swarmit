@@ -9,7 +9,7 @@ use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
 use swarmit_core::events::locking::try_append_with_timeout;
 use swarmit_core::events::log::{append_operation, read_operations_since};
 use swarmit_core::events::operations::{Operation, OperationKind};
-use swarmit_core::models::{AgentId, ItemId, Priority};
+use swarmit_core::models::{AgentId, ItemId, Priority, Status};
 use swarmit_core::state::ProjectState;
 
 use crate::components::dashboard::DashboardRow;
@@ -45,6 +45,9 @@ pub struct App {
 
     // Epics that are currently collapsed in the dashboard tree.
     pub collapsed_epics: HashSet<ItemId>,
+
+    /// Status filter for the dashboard (None = show all).
+    pub dashboard_filter: Option<Status>,
 
     // Cached flattened tree rows for the dashboard (rebuilt on state changes).
     pub dashboard_rows: Vec<DashboardRow>,
@@ -87,6 +90,7 @@ impl App {
             search_query: String::new(),
             modal: None,
             collapsed_epics: HashSet::new(),
+            dashboard_filter: None,
             dashboard_rows: Vec::new(),
         };
         app.rebuild_dashboard_rows();
@@ -167,6 +171,10 @@ impl App {
                         }
                     }
                 }
+            }
+            Action::CycleFilter => {
+                self.dashboard_filter = next_status_filter(self.dashboard_filter);
+                self.rebuild_dashboard_rows();
             }
             _ => {}
         }
@@ -528,17 +536,26 @@ impl App {
 
             if !self.collapsed_epics.contains(epic_id) {
                 for task_id in &epic.task_ids {
+                    // Apply status filter to epic tasks.
+                    if let Some(filter) = &self.dashboard_filter {
+                        if self.state.tasks.get(task_id).map_or(false, |t| t.status != *filter) {
+                            continue;
+                        }
+                    }
                     rows.push(DashboardRow::Task { id: task_id.clone() });
                 }
             }
         }
 
-        // Collect active orphan tasks (no epic, non-terminal status).
+        // Collect orphan tasks (no epic), applying status filter.
         let orphans: Vec<ItemId> = self
             .state
             .tasks
             .values()
-            .filter(|t| t.epic_id.is_none() && !t.status.is_terminal())
+            .filter(|t| {
+                t.epic_id.is_none()
+                    && self.dashboard_filter.map_or(true, |f| t.status == f)
+            })
             .map(|t| t.id.clone())
             .collect();
 
@@ -678,5 +695,16 @@ impl App {
                 self.rebuild_dashboard_rows();
             }
         }
+    }
+}
+
+fn next_status_filter(current: Option<Status>) -> Option<Status> {
+    match current {
+        None => Some(Status::Todo),
+        Some(Status::Todo) => Some(Status::InProgress),
+        Some(Status::InProgress) => Some(Status::Blocked),
+        Some(Status::Blocked) => Some(Status::Done),
+        Some(Status::Done) => Some(Status::Cancelled),
+        Some(Status::Cancelled) => None,
     }
 }

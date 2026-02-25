@@ -55,8 +55,6 @@ pub struct TaskListArgs {
     pub assignee: Option<String>,
     #[arg(long)]
     pub agent: Option<String>,
-    #[arg(long)]
-    pub archived: bool,
 }
 
 #[derive(Args, Debug)]
@@ -117,17 +115,8 @@ fn materialize_task(state_dir: &std::path::Path, log_path: &std::path::Path, tas
                 }
             }
             None => {
-                // Remove from whichever directory the old file was in
-                markdown::remove_task_file(state_dir, task_id, None)
-                    .map_err(|e| anyhow::anyhow!("Failed to remove stale markdown: {}", e))?;
-                // Route to archive/ or backlog/ based on status
-                if task.is_archived_backlog() {
-                    markdown::materialize_archived_task(state_dir, task)
-                        .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
-                } else {
-                    markdown::materialize_backlog_task(state_dir, task)
-                        .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
-                }
+                markdown::materialize_backlog_task(state_dir, task)
+                    .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
             }
         }
     }
@@ -229,14 +218,6 @@ fn list(args: &TaskListArgs, cli: &Cli) -> Result<()> {
                 && assignee_filter
                     .as_ref()
                     .map_or(true, |a| t.assignee.as_ref() == Some(a))
-                // Archive filtering: --archived shows only archived; default hides them
-                && if args.archived {
-                    t.is_archived_backlog()
-                } else if status_filter.is_some() {
-                    true // explicit --status overrides archive hiding
-                } else {
-                    !t.is_archived_backlog()
-                }
         })
         .collect();
 
