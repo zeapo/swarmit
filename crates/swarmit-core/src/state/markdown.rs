@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::models::{Epic, Result, Task};
+use crate::models::{Epic, ItemId, Result, Task};
 
 /// Writes an epic and its tasks to the materialized markdown directory.
 pub fn materialize_epic(state_dir: &Path, epic: &Epic, tasks: &[&Task]) -> Result<()> {
@@ -19,6 +19,28 @@ pub fn materialize_backlog_task(state_dir: &Path, task: &Task) -> Result<()> {
     let backlog_dir = state_dir.join("backlog");
     fs::create_dir_all(&backlog_dir)?;
     write_task_file(&backlog_dir, task)?;
+    Ok(())
+}
+
+/// Removes an epic's directory and all markdown files within it.
+pub fn remove_epic(state_dir: &Path, epic: &Epic) -> Result<()> {
+    let dir = epic_dir_path(state_dir, epic);
+    if dir.exists() {
+        fs::remove_dir_all(dir)?;
+    }
+    Ok(())
+}
+
+/// Removes a single task's markdown file from its location (epic dir or backlog).
+pub fn remove_task_file(state_dir: &Path, task_id: &ItemId, epic: Option<&Epic>) -> Result<()> {
+    let dir = match epic {
+        Some(e) => epic_dir_path(state_dir, e),
+        None => state_dir.join("backlog"),
+    };
+    let path = dir.join(format!("{}.md", task_id));
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
     Ok(())
 }
 
