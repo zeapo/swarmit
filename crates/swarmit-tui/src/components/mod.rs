@@ -1,5 +1,6 @@
 pub mod activity;
 pub mod board;
+pub mod global_board;
 pub mod dashboard;
 pub mod filter_select;
 pub mod sort_select;
