@@ -31,10 +31,18 @@ pub fn run(_args: &SyncArgs, cli: &Cli) -> Result<()> {
         epic_count += 1;
     }
 
-    for task in state.tasks.values().filter(|t| t.epic_id.is_none()) {
+    let mut archived_count = 0usize;
+
+    for task in state.backlog_tasks() {
         markdown::materialize_backlog_task(&state_dir, task)
             .map_err(|e| anyhow::anyhow!("Failed to materialize {}: {}", task.id, e))?;
         task_count += 1;
+    }
+
+    for task in state.archived_tasks() {
+        markdown::materialize_archived_task(&state_dir, task)
+            .map_err(|e| anyhow::anyhow!("Failed to materialize {}: {}", task.id, e))?;
+        archived_count += 1;
     }
 
     let mode = OutputMode::detect(cli.json, cli.plain);
@@ -42,11 +50,13 @@ pub fn run(_args: &SyncArgs, cli: &Cli) -> Result<()> {
         OutputMode::Json => print_json_ok(serde_json::json!({
             "epics": epic_count,
             "tasks": task_count,
+            "archived": archived_count,
         })),
         OutputMode::Pretty => println!(
-            "Materialized {} epic(s), {} task(s) → {}",
+            "Materialized {} epic(s), {} task(s), {} archived → {}",
             epic_count,
             task_count,
+            archived_count,
             state_dir.display()
         ),
     }

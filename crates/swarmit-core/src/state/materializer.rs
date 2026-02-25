@@ -336,6 +336,22 @@ impl ProjectState {
             .filter(|t| t.epic_id.as_ref() == Some(epic_id))
             .collect()
     }
+
+    /// Active backlog tasks: no epic, non-terminal status.
+    pub fn backlog_tasks(&self) -> Vec<&Task> {
+        self.tasks
+            .values()
+            .filter(|t| t.epic_id.is_none() && !t.status.is_terminal())
+            .collect()
+    }
+
+    /// Archived backlog tasks: no epic, terminal status (Done/Cancelled).
+    pub fn archived_tasks(&self) -> Vec<&Task> {
+        self.tasks
+            .values()
+            .filter(|t| t.is_archived_backlog())
+            .collect()
+    }
 }
 
 #[cfg(test)]

@@ -34,6 +34,11 @@ pub struct Comment {
 }
 
 impl Task {
+    /// A backlog task is "archived" when it has no epic and is in a terminal status.
+    pub fn is_archived_backlog(&self) -> bool {
+        self.epic_id.is_none() && self.status.is_terminal()
+    }
+
     pub fn new(id: ItemId, title: impl Into<String>, created_by: AgentId) -> Self {
         let now = Utc::now();
         Task {

@@ -533,12 +533,12 @@ impl App {
             }
         }
 
-        // Collect orphan tasks (no epic).
+        // Collect active orphan tasks (no epic, non-terminal status).
         let orphans: Vec<ItemId> = self
             .state
             .tasks
             .values()
-            .filter(|t| t.epic_id.is_none())
+            .filter(|t| t.epic_id.is_none() && !t.status.is_terminal())
             .map(|t| t.id.clone())
             .collect();
 
