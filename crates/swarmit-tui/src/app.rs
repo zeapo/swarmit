@@ -16,6 +16,16 @@ use crate::components::dashboard::DashboardRow;
 use crate::events::{Action, Modal, Screen, TaskFormField};
 use crate::theme::Theme;
 
+/// The ordered list of filter options shown in the FilterSelect dialog.
+pub const FILTER_OPTIONS: &[Option<Status>] = &[
+    None,
+    Some(Status::Todo),
+    Some(Status::InProgress),
+    Some(Status::Blocked),
+    Some(Status::Done),
+    Some(Status::Cancelled),
+];
+
 /// Central application state.
 pub struct App {
     pub state: ProjectState,

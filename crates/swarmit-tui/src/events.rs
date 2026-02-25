@@ -56,4 +56,5 @@ pub enum Modal {
         focused_field: TaskFormField,
         error: Option<String>,
     },
+    FilterSelect { selected_index: usize },
 }
