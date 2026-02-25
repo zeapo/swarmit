@@ -14,6 +14,10 @@ work concurrently — all writes are lock-protected.
 
 ## Core Workflow
 
+Default listing behavior for this skill:
+- If user asks to "list tasks" without specifying a status, use `--status todo`.
+- Only list all tasks (including done) when the user explicitly asks for all/completed/done tasks.
+
 ### 1. Find work
 ```bash
 swarmit task list --status todo --json --agent me
@@ -48,8 +52,8 @@ Loop back to step 1.
 | Command | Description |
 |---------|-------------|
 | `swarmit init --name "Project" --agent me` | Initialize project |
-| `swarmit task list --json` | List all tasks |
-| `swarmit task list --status todo --json` | List unstarted tasks |
+| `swarmit task list --status todo --json` | Default list (todo only) |
+| `swarmit task list --json` | List all tasks (including done) |
 | `swarmit task list --epic EPIC-001 --json` | Tasks in an epic |
 | `swarmit task show TASK-007` | Full task detail with relationships & comments |
 | `swarmit task claim TASK-007 --agent me` | Claim a task |
