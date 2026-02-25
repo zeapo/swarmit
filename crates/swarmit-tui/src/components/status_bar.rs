@@ -23,7 +23,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         match &app.screen {
             Screen::Dashboard => (
                 "Dashboard",
-                "j/k:move  Enter:open  n:new task  1:dashboard  2:backlog  3:activity  ?:help  q:quit",
+                "j/k:move  Enter:open  Space:expand  n:new  1:dashboard  2:backlog  3:activity  ?:help  q:quit",
             ),
             Screen::Board { .. } => (
                 "Board",

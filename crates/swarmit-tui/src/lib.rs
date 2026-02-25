@@ -144,13 +144,8 @@ fn key_to_action(code: KeyCode, _modifiers: KeyModifiers, screen: &Screen) -> Ac
         KeyCode::Char('j') | KeyCode::Down => Action::Down,
         KeyCode::Char('k') | KeyCode::Up => Action::Up,
         KeyCode::Enter => Action::Select,
-        KeyCode::Esc => {
-            if matches!(screen, Screen::Help) {
-                Action::Back
-            } else {
-                Action::Back
-            }
-        }
+        KeyCode::Char(' ') if matches!(screen, Screen::Dashboard) => Action::ToggleCollapse,
+        KeyCode::Esc => Action::Back,
         KeyCode::Char('?') => Action::Help,
         KeyCode::Char('/') => Action::Search,
         KeyCode::Char('c') => Action::ClaimTask,
