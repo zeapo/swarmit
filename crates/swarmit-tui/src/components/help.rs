@@ -9,8 +9,8 @@ use crate::theme::Theme;
 
 /// Renders a centered help overlay on top of the current screen.
 pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
-    // Center a 60×26 popup
-    let popup = centered_rect(60, 26, area);
+    // Center a 60×24 popup
+    let popup = centered_rect(60, 24, area);
 
     // Clear the area behind the popup
     f.render_widget(Clear, popup);
@@ -23,8 +23,7 @@ pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
         ("f", "Cycle status filter (Dashboard)"),
         ("Esc", "Go back"),
         ("1", "Jump to Dashboard"),
-        ("2", "Jump to Backlog"),
-        ("3", "Jump to Activity"),
+        ("2", "Jump to Activity"),
         ("n", "Create new task"),
         ("c", "Claim selected task"),
         ("s", "Change task status"),

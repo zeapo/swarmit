@@ -25,7 +25,6 @@ pub enum Action {
     ClaimTask,
     ChangeStatus,
     GotoDashboard,
-    GotoBacklog,
     GotoActivity,
     Refresh,
     ToggleCollapse,

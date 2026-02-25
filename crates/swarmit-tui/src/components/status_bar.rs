@@ -33,7 +33,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                 };
                 (
                     format!("Dashboard [{}]", filter_label),
-                    "j/k:move  Enter:open  Space:expand  f:filter  n:new  1:dashboard  2:backlog  3:activity  ?:help  q:quit",
+                    "j/k:move  Enter:open  Space:expand  f:filter  n:new  1:dashboard  2:activity  ?:help  q:quit",
                 )
             }
             Screen::Board { .. } => (

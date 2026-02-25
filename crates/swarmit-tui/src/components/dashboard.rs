@@ -15,12 +15,8 @@ use crate::app::App;
 pub enum DashboardRow {
     /// An epic header row (expandable/collapsible).
     Epic { id: ItemId },
-    /// A task belonging to an epic (shown when epic is expanded).
+    /// A task row (either under an epic or orphan).
     Task { id: ItemId },
-    /// Separator header for tasks with no epic.
-    BacklogHeader,
-    /// A task with no epic assignment.
-    BacklogTask { id: ItemId },
 }
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
@@ -178,50 +174,6 @@ fn render_tree(f: &mut Frame, app: &App, area: Rect) {
                     .style(style)
                 }
 
-                DashboardRow::BacklogHeader => {
-                    // Full-width muted separator — not selectable.
-                    Row::new(vec![
-                        Cell::from("── Backlog"),
-                        Cell::from(""),
-                        Cell::from(""),
-                        Cell::from(""),
-                        Cell::from(""),
-                    ])
-                    .style(theme.muted_style().add_modifier(Modifier::DIM))
-                }
-
-                DashboardRow::BacklogTask { id } => {
-                    let task = match app.state.tasks.get(id) {
-                        Some(t) => t,
-                        None => return Row::new(vec![Cell::from("")]),
-                    };
-
-                    let id_cell = format!("    {}", task.id);
-                    let status_str = task.status.to_string();
-                    let priority_str = task.priority.to_string();
-                    let assignee = task
-                        .assignee
-                        .as_ref()
-                        .map(|a| format!("@{}", a))
-                        .unwrap_or_default();
-
-                    let style = if is_selected {
-                        theme.selected_style()
-                    } else {
-                        theme.normal_style()
-                    };
-
-                    Row::new(vec![
-                        Cell::from(id_cell),
-                        Cell::from(task.title.clone()),
-                        Cell::from(status_str.clone())
-                            .style(Style::default().fg(theme.status_color(&status_str))),
-                        Cell::from(priority_str.clone())
-                            .style(Style::default().fg(theme.priority_color(&priority_str))),
-                        Cell::from(assignee).style(theme.muted_style()),
-                    ])
-                    .style(style)
-                }
             }
         })
         .collect();

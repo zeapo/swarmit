@@ -126,16 +126,6 @@ impl App {
                 self.selected_index = 0;
                 self.rebuild_dashboard_rows();
             }
-            Action::GotoBacklog => {
-                self.screen = Screen::Board {
-                    epic_id: "_backlog".parse().unwrap_or_else(|_| {
-                        // Sentinel: we use epic_id="" to mean backlog
-                        // This is handled in board rendering
-                        ItemId::new("BACK", 0)
-                    }),
-                };
-                self.selected_index = 0;
-            }
             Action::GotoActivity => {
                 self.screen = Screen::Activity;
                 self.selected_index = 0;
@@ -159,7 +149,6 @@ impl App {
                                     .get(&id)
                                     .and_then(|t| t.epic_id.clone())
                             }
-                            _ => None,
                         };
                         if let Some(eid) = epic_id {
                             if self.collapsed_epics.contains(&eid) {
@@ -559,11 +548,8 @@ impl App {
             .map(|t| t.id.clone())
             .collect();
 
-        if !orphans.is_empty() {
-            rows.push(DashboardRow::BacklogHeader);
-            for task_id in orphans {
-                rows.push(DashboardRow::BacklogTask { id: task_id });
-            }
+        for task_id in orphans {
+            rows.push(DashboardRow::Task { id: task_id });
         }
 
         self.dashboard_rows = rows;
@@ -576,49 +562,13 @@ impl App {
     }
 
     fn move_up(&mut self) {
-        if matches!(self.screen, Screen::Dashboard) {
-            // Skip BacklogHeader rows (non-selectable).
-            let mut idx = self.selected_index;
-            loop {
-                if idx == 0 {
-                    break;
-                }
-                idx -= 1;
-                if !matches!(
-                    self.dashboard_rows.get(idx),
-                    Some(DashboardRow::BacklogHeader)
-                ) {
-                    self.selected_index = idx;
-                    break;
-                }
-            }
-        } else {
-            self.selected_index = self.selected_index.saturating_sub(1);
-        }
+        self.selected_index = self.selected_index.saturating_sub(1);
     }
 
     fn move_down(&mut self) {
-        if matches!(self.screen, Screen::Dashboard) {
-            let len = self.dashboard_rows.len();
-            let mut idx = self.selected_index;
-            loop {
-                if idx + 1 >= len {
-                    break;
-                }
-                idx += 1;
-                if !matches!(
-                    self.dashboard_rows.get(idx),
-                    Some(DashboardRow::BacklogHeader)
-                ) {
-                    self.selected_index = idx;
-                    break;
-                }
-            }
-        } else {
-            let max = self.current_list_len().saturating_sub(1);
-            if self.selected_index < max {
-                self.selected_index += 1;
-            }
+        let max = self.current_list_len().saturating_sub(1);
+        if self.selected_index < max {
+            self.selected_index += 1;
         }
     }
 
@@ -630,11 +580,11 @@ impl App {
                         self.screen = Screen::Board { epic_id: id };
                         self.selected_index = 0;
                     }
-                    Some(DashboardRow::Task { id }) | Some(DashboardRow::BacklogTask { id }) => {
+                    Some(DashboardRow::Task { id }) => {
                         self.screen = Screen::TaskDetail { task_id: id };
                         self.selected_index = 0;
                     }
-                    Some(DashboardRow::BacklogHeader) | None => {}
+                    None => {}
                 }
             }
             Screen::Board { epic_id } => {

@@ -152,8 +152,7 @@ fn key_to_action(code: KeyCode, _modifiers: KeyModifiers, screen: &Screen) -> Ac
         KeyCode::Char('c') => Action::ClaimTask,
         KeyCode::Char('s') => Action::ChangeStatus,
         KeyCode::Char('1') => Action::GotoDashboard,
-        KeyCode::Char('2') => Action::GotoBacklog,
-        KeyCode::Char('3') => Action::GotoActivity,
+        KeyCode::Char('2') => Action::GotoActivity,
         KeyCode::Char('r') => Action::Refresh,
         _ => Action::None,
     }
