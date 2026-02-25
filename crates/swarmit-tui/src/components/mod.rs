@@ -2,6 +2,7 @@ pub mod activity;
 pub mod board;
 pub mod dashboard;
 pub mod filter_select;
+pub mod sort_select;
 pub mod help;
 pub mod quit_confirm;
 pub mod status_bar;

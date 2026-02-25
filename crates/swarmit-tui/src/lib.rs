@@ -108,6 +108,9 @@ fn run_loop(
                     Modal::FilterSelect { selected_index } => {
                         components::filter_select::render(f, app, *selected_index, main_area)
                     }
+                    Modal::SortSelect { selected_index } => {
+                        components::sort_select::render(f, app, *selected_index, main_area)
+                    }
                 }
             }
 
@@ -149,6 +152,7 @@ fn key_to_action(code: KeyCode, _modifiers: KeyModifiers, screen: &Screen) -> Ac
         KeyCode::Enter => Action::Select,
         KeyCode::Char(' ') if matches!(screen, Screen::Dashboard) => Action::ToggleCollapse,
         KeyCode::Char('f') if matches!(screen, Screen::Dashboard) => Action::OpenFilterDialog,
+        KeyCode::Char('s') if matches!(screen, Screen::Dashboard) => Action::OpenSortDialog,
         KeyCode::Esc => Action::Back,
         KeyCode::Char('?') => Action::Help,
         KeyCode::Char('/') => Action::Search,

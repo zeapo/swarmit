@@ -32,6 +32,10 @@ pub enum Action {
     FilterDialogMove(i8),
     FilterDialogConfirm,
     FilterDialogCancel,
+    OpenSortDialog,
+    SortDialogMove(i8),
+    SortDialogConfirm,
+    SortDialogCancel,
     None,
 }
 
@@ -60,4 +64,5 @@ pub enum Modal {
         error: Option<String>,
     },
     FilterSelect { selected_index: usize },
+    SortSelect { selected_index: usize },
 }

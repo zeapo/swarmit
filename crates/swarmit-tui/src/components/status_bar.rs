@@ -24,6 +24,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                 ("New Task".to_string(), hints)
             }
             Modal::FilterSelect { .. } => ("Dashboard".to_string(), "j/k:move  Enter:select  Esc:cancel"),
+            Modal::SortSelect { .. } => ("Dashboard".to_string(), "j/k:move  Enter:select  Esc:cancel"),
         }
     } else {
         match &app.screen {
@@ -32,9 +33,10 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                     None => "All".to_string(),
                     Some(s) => format!("{}", s),
                 };
+                let sort_label = app.dashboard_sort.label();
                 (
-                    format!("Dashboard [{}]", filter_label),
-                    "j/k:move  Enter:open  Space:expand  f:filter  n:new  1:dashboard  2:activity  ?:help  q:quit",
+                    format!("Dashboard [{}] [{}]", filter_label, sort_label),
+                    "j/k:move  Enter:open  Space:expand  f:filter  s:sort  n:new  1:dashboard  2:activity  ?:help  q:quit",
                 )
             }
             Screen::Board { .. } => (

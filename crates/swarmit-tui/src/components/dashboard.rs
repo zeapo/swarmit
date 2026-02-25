@@ -164,7 +164,8 @@ fn render_tree(f: &mut Frame, app: &App, area: Rect) {
                         None => return Row::new(vec![Cell::from("")]),
                     };
 
-                    let id_cell = format!("    {}", task.id);
+                    let indent = if task.epic_id.is_some() { "    " } else { "  " };
+                    let id_cell = format!("{}{}", indent, task.id);
                     let status_str = task.status.to_string();
                     let priority_str = task.priority.to_string();
                     let assignee = task
@@ -175,6 +176,8 @@ fn render_tree(f: &mut Frame, app: &App, area: Rect) {
 
                     let style = if is_selected {
                         theme.selected_style()
+                    } else if task.epic_id.is_none() {
+                        theme.normal_style().add_modifier(Modifier::BOLD)
                     } else {
                         theme.normal_style()
                     };

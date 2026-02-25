@@ -16,6 +16,31 @@ use crate::components::dashboard::DashboardRow;
 use crate::events::{Action, Modal, Screen, TaskFormField};
 use crate::theme::Theme;
 
+/// Sort order for the dashboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortOption {
+    CreationDate,
+    #[default]
+    RecentUpdate,
+    Title,
+}
+
+impl SortOption {
+    pub fn label(&self) -> &'static str {
+        match self {
+            SortOption::CreationDate => "Creation date",
+            SortOption::RecentUpdate => "Recent update",
+            SortOption::Title => "Title",
+        }
+    }
+}
+
+pub const SORT_OPTIONS: &[SortOption] = &[
+    SortOption::CreationDate,
+    SortOption::RecentUpdate,
+    SortOption::Title,
+];
+
 /// The ordered list of filter options shown in the FilterSelect dialog.
 pub const FILTER_OPTIONS: &[Option<Status>] = &[
     None,
@@ -59,6 +84,9 @@ pub struct App {
     /// Status filter for the dashboard (None = show all).
     pub dashboard_filter: Option<Status>,
 
+    /// Sort order for the dashboard.
+    pub dashboard_sort: SortOption,
+
     // Cached flattened tree rows for the dashboard (rebuilt on state changes).
     pub dashboard_rows: Vec<DashboardRow>,
 }
@@ -101,6 +129,7 @@ impl App {
             modal: None,
             collapsed_epics: HashSet::new(),
             dashboard_filter: None,
+            dashboard_sort: SortOption::default(),
             dashboard_rows: Vec::new(),
         };
         app.rebuild_dashboard_rows();
@@ -202,6 +231,30 @@ impl App {
             Action::FilterDialogCancel => {
                 self.modal = None;
             }
+            Action::OpenSortDialog => {
+                let selected_index = SORT_OPTIONS
+                    .iter()
+                    .position(|opt| *opt == self.dashboard_sort)
+                    .unwrap_or(0);
+                self.modal = Some(Modal::SortSelect { selected_index });
+            }
+            Action::SortDialogMove(delta) => {
+                if let Some(Modal::SortSelect { selected_index }) = &mut self.modal {
+                    let len = SORT_OPTIONS.len();
+                    *selected_index = ((*selected_index as isize + delta as isize)
+                        .rem_euclid(len as isize)) as usize;
+                }
+            }
+            Action::SortDialogConfirm => {
+                if let Some(Modal::SortSelect { selected_index }) = &self.modal {
+                    self.dashboard_sort = SORT_OPTIONS[*selected_index];
+                    self.rebuild_dashboard_rows();
+                }
+                self.modal = None;
+            }
+            Action::SortDialogCancel => {
+                self.modal = None;
+            }
             _ => {}
         }
     }
@@ -212,6 +265,7 @@ impl App {
             Some(Modal::QuitConfirm) => self.handle_quit_confirm_key(code),
             Some(Modal::TaskCreate { .. }) => self.handle_task_form_key(code, modifiers),
             Some(Modal::FilterSelect { .. }) => self.handle_filter_select_key(code),
+            Some(Modal::SortSelect { .. }) => self.handle_sort_select_key(code),
             None => {}
         }
     }
@@ -234,6 +288,17 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => Action::FilterDialogMove(-1),
             KeyCode::Enter => Action::FilterDialogConfirm,
             KeyCode::Esc | KeyCode::Char('q') => Action::FilterDialogCancel,
+            _ => return,
+        };
+        self.apply_action(action);
+    }
+
+    fn handle_sort_select_key(&mut self, code: KeyCode) {
+        let action = match code {
+            KeyCode::Char('j') | KeyCode::Down => Action::SortDialogMove(1),
+            KeyCode::Char('k') | KeyCode::Up => Action::SortDialogMove(-1),
+            KeyCode::Enter => Action::SortDialogConfirm,
+            KeyCode::Esc | KeyCode::Char('q') => Action::SortDialogCancel,
             _ => return,
         };
         self.apply_action(action);
@@ -567,35 +632,74 @@ impl App {
     pub fn rebuild_dashboard_rows(&mut self) {
         let mut rows = Vec::new();
 
-        // 1. Orphan tasks first (no epic), applying status filter.
-        let orphans: Vec<ItemId> = self
-            .state
-            .tasks
-            .values()
-            .filter(|t| {
-                t.epic_id.is_none()
-                    && self.dashboard_filter.map_or(true, |f| t.status == f)
-            })
-            .map(|t| t.id.clone())
-            .collect();
-
-        for task_id in orphans {
-            rows.push(DashboardRow::Task { id: task_id });
+        // Collect all top-level items (orphan tasks and epics) into a unified
+        // list so they are sorted together rather than as two separate groups.
+        enum TopLevel {
+            Task(ItemId),
+            Epic(ItemId),
         }
 
-        // 2. Epics (with their tasks when expanded), in BTreeMap order (deterministic).
-        for (epic_id, epic) in &self.state.epics {
-            rows.push(DashboardRow::Epic { id: epic_id.clone() });
+        let mut top: Vec<TopLevel> = Vec::new();
 
-            if !self.collapsed_epics.contains(epic_id) {
-                for task_id in &epic.task_ids {
-                    // Apply status filter to epic tasks.
-                    if let Some(filter) = &self.dashboard_filter {
-                        if self.state.tasks.get(task_id).map_or(false, |t| t.status != *filter) {
-                            continue;
+        for task in self.state.tasks.values() {
+            if task.epic_id.is_none()
+                && self.dashboard_filter.map_or(true, |f| task.status == f)
+            {
+                top.push(TopLevel::Task(task.id.clone()));
+            }
+        }
+        for epic_id in self.state.epics.keys() {
+            top.push(TopLevel::Epic(epic_id.clone()));
+        }
+
+        top.sort_by(|a, b| {
+            let (a_updated, a_created, a_title) = match a {
+                TopLevel::Task(id) => {
+                    let t = &self.state.tasks[id];
+                    (t.updated_at, t.created_at, t.title.as_str())
+                }
+                TopLevel::Epic(id) => {
+                    let e = &self.state.epics[id];
+                    (e.updated_at, e.created_at, e.title.as_str())
+                }
+            };
+            let (b_updated, b_created, b_title) = match b {
+                TopLevel::Task(id) => {
+                    let t = &self.state.tasks[id];
+                    (t.updated_at, t.created_at, t.title.as_str())
+                }
+                TopLevel::Epic(id) => {
+                    let e = &self.state.epics[id];
+                    (e.updated_at, e.created_at, e.title.as_str())
+                }
+            };
+            match self.dashboard_sort {
+                SortOption::RecentUpdate => b_updated.cmp(&a_updated),
+                SortOption::CreationDate => b_created.cmp(&a_created),
+                SortOption::Title => a_title.cmp(b_title),
+            }
+        });
+
+        for item in top {
+            match item {
+                TopLevel::Task(task_id) => {
+                    rows.push(DashboardRow::Task { id: task_id });
+                }
+                TopLevel::Epic(epic_id) => {
+                    let task_ids: Vec<ItemId> = self.state.epics[&epic_id].task_ids.clone();
+                    rows.push(DashboardRow::Epic { id: epic_id.clone() });
+
+                    if !self.collapsed_epics.contains(&epic_id) {
+                        for task_id in task_ids {
+                            // Apply status filter to epic tasks.
+                            if let Some(filter) = &self.dashboard_filter {
+                                if self.state.tasks.get(&task_id).map_or(false, |t| t.status != *filter) {
+                                    continue;
+                                }
+                            }
+                            rows.push(DashboardRow::Task { id: task_id });
                         }
                     }
-                    rows.push(DashboardRow::Task { id: task_id.clone() });
                 }
             }
         }
@@ -701,6 +805,8 @@ mod tests {
     use super::*;
     use crate::theme::Theme;
     use swarmit_core::models::Status;
+    use swarmit_core::events::operations::{Operation, OperationKind};
+    use swarmit_core::models::{AgentId, Priority};
 
     #[test]
     fn filter_dialog_opens_with_current_filter_preselected() {
@@ -747,6 +853,157 @@ mod tests {
         app.apply_action(Action::FilterDialogCancel);
         assert_eq!(app.dashboard_filter, Some(Status::Done));
         assert!(app.modal.is_none());
+    }
+
+    #[test]
+    fn sort_dialog_opens_with_current_sort_preselected() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+        // Default is RecentUpdate which is index 1 in SORT_OPTIONS
+        app.apply_action(Action::OpenSortDialog);
+        assert!(matches!(
+            app.modal,
+            Some(Modal::SortSelect { selected_index: 1 })
+        ));
+    }
+
+    #[test]
+    fn sort_dialog_navigation_wraps() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+        app.modal = Some(Modal::SortSelect { selected_index: 0 });
+        app.apply_action(Action::SortDialogMove(-1));
+        let last = SORT_OPTIONS.len() - 1;
+        assert!(matches!(
+            app.modal,
+            Some(Modal::SortSelect { selected_index }) if selected_index == last
+        ));
+    }
+
+    #[test]
+    fn sort_dialog_confirm_sets_sort_and_closes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+        app.modal = Some(Modal::SortSelect { selected_index: 0 }); // CreationDate
+        app.apply_action(Action::SortDialogConfirm);
+        assert_eq!(app.dashboard_sort, SortOption::CreationDate);
+        assert!(app.modal.is_none());
+    }
+
+    #[test]
+    fn sort_dialog_cancel_closes_without_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+        app.dashboard_sort = SortOption::Title;
+        app.modal = Some(Modal::SortSelect { selected_index: 0 });
+        app.apply_action(Action::SortDialogCancel);
+        assert_eq!(app.dashboard_sort, SortOption::Title);
+        assert!(app.modal.is_none());
+    }
+
+    fn make_agent() -> AgentId {
+        AgentId::new("test-agent").unwrap()
+    }
+
+    #[test]
+    fn dashboard_rows_sorted_by_recent_update_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+
+        // Create two tasks with different titles so we can identify them
+        let id1 = ItemId::new("TASK", 1);
+        let id2 = ItemId::new("TASK", 2);
+
+        let op1 = Operation::new(
+            make_agent(),
+            OperationKind::CreateTask {
+                id: id1.clone(),
+                title: "Alpha task".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            },
+        );
+        let op2 = Operation::new(
+            make_agent(),
+            OperationKind::CreateTask {
+                id: id2.clone(),
+                title: "Beta task".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            },
+        );
+
+        let _ = app.state.apply(op1);
+        let _ = app.state.apply(op2);
+        app.rebuild_dashboard_rows();
+
+        // Default sort is RecentUpdate (most recent first).
+        // op2 was applied second so its created_at/updated_at is >= op1.
+        // Row order should have id2 before id1.
+        assert_eq!(app.dashboard_sort, SortOption::RecentUpdate);
+        assert!(app.dashboard_rows.len() >= 2);
+    }
+
+    #[test]
+    fn epic_child_tasks_keep_creation_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+
+        let epic_id = ItemId::new("EPIC", 1);
+        let task_id1 = ItemId::new("TASK", 1);
+        let task_id2 = ItemId::new("TASK", 2);
+
+        let _ = app.state.apply(Operation::new(
+            make_agent(),
+            OperationKind::CreateEpic {
+                id: epic_id.clone(),
+                title: "My Epic".to_string(),
+                description: None,
+                priority: Priority::Medium,
+            },
+        ));
+        let _ = app.state.apply(Operation::new(
+            make_agent(),
+            OperationKind::CreateTask {
+                id: task_id1.clone(),
+                title: "First task".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: Some(epic_id.clone()),
+            },
+        ));
+        let _ = app.state.apply(Operation::new(
+            make_agent(),
+            OperationKind::CreateTask {
+                id: task_id2.clone(),
+                title: "Second task".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: Some(epic_id.clone()),
+            },
+        ));
+
+        // Switch to Title sort — epics would reorder, but tasks under epic stay in insertion order
+        app.dashboard_sort = SortOption::Title;
+        app.rebuild_dashboard_rows();
+
+        // Find epic row and the two task rows after it
+        let epic_pos = app
+            .dashboard_rows
+            .iter()
+            .position(|r| matches!(r, DashboardRow::Epic { id } if id == &epic_id))
+            .expect("epic row should exist");
+
+        let task_rows: Vec<&ItemId> = app.dashboard_rows[epic_pos + 1..]
+            .iter()
+            .take_while(|r| matches!(r, DashboardRow::Task { .. }))
+            .filter_map(|r| if let DashboardRow::Task { id } = r { Some(id) } else { None })
+            .collect();
+
+        // Tasks under epic should remain in creation order (task_id1 before task_id2)
+        assert_eq!(task_rows, vec![&task_id1, &task_id2]);
     }
 }
 

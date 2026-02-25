@@ -26,7 +26,7 @@ pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
         ("2", "Jump to Activity"),
         ("n", "Create new task"),
         ("c", "Claim selected task"),
-        ("s", "Change task status"),
+        ("s", "Sort dashboard / Change status"),
         ("/", "Search (coming soon)"),
         ("?", "Toggle this help"),
         ("q", "Quit (with confirmation)"),
