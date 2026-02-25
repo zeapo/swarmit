@@ -17,7 +17,6 @@ license = "MIT"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
@@ -34,14 +33,12 @@ fd-lock = "4"
 clap = { version = "4", features = ["derive", "env"] }
 
 # TUI
-ratatui = "0.29"
-crossterm = "0.28"
-notify-debouncer-mini = "0.4"
+ratatui = "0.30"
+crossterm = "0.29"
+notify = "8"
+notify-debouncer-mini = "0.7"
 catppuccin = { version = "2", features = ["ratatui"] }
 terminal-colorsaurus = "1"
-
-# Async
-tokio = { version = "1", features = ["full"] }
 
 # Internal
 swarmit-core = { path = "crates/swarmit-core" }

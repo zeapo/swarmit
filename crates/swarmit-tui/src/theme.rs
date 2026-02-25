@@ -1,5 +1,9 @@
-use catppuccin::{FlavorColors, PALETTE};
+use catppuccin::{Color as CatColor, FlavorColors, PALETTE};
 use ratatui::style::{Color, Modifier, Style};
+
+fn cat(c: CatColor) -> Color {
+    Color::Rgb(c.rgb.r, c.rgb.g, c.rgb.b)
+}
 
 /// Application theme backed by a Catppuccin flavor.
 ///
@@ -36,47 +40,47 @@ impl Theme {
     // ── Raw color accessors ──────────────────────────────────────────────
 
     pub fn text(&self) -> Color {
-        self.colors.text.into()
+        cat(self.colors.text)
     }
 
     pub fn muted_color(&self) -> Color {
-        self.colors.overlay0.into()
+        cat(self.colors.overlay0)
     }
 
     pub fn primary(&self) -> Color {
-        self.colors.blue.into()
+        cat(self.colors.blue)
     }
 
     pub fn secondary(&self) -> Color {
-        self.colors.sapphire.into()
+        cat(self.colors.sapphire)
     }
 
     pub fn success(&self) -> Color {
-        self.colors.green.into()
+        cat(self.colors.green)
     }
 
     pub fn warning(&self) -> Color {
-        self.colors.yellow.into()
+        cat(self.colors.yellow)
     }
 
     pub fn error(&self) -> Color {
-        self.colors.red.into()
+        cat(self.colors.red)
     }
 
     pub fn surface(&self) -> Color {
-        self.colors.surface1.into()
+        cat(self.colors.surface1)
     }
 
     pub fn mantle(&self) -> Color {
-        self.colors.mantle.into()
+        cat(self.colors.mantle)
     }
 
     pub fn subtext(&self) -> Color {
-        self.colors.subtext0.into()
+        cat(self.colors.subtext0)
     }
 
     pub fn peach(&self) -> Color {
-        self.colors.peach.into()
+        cat(self.colors.peach)
     }
 
     // ── Style builders ───────────────────────────────────────────────────

@@ -8,7 +8,7 @@ swarmit-core = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 notify-debouncer-mini = { workspace = true }
-notify = "6"
+notify = { workspace = true }
 anyhow = { workspace = true }
 catppuccin = { workspace = true }
 terminal-colorsaurus = { workspace = true }
