@@ -36,6 +36,7 @@ pub enum Action {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskFormField {
     Title,
+    Description,
     Epic,
     Priority,
 }
@@ -47,6 +48,9 @@ pub enum Modal {
     TaskCreate {
         title: String,
         cursor_pos: usize,
+        description: Vec<String>,
+        desc_row: usize,
+        desc_col: usize,
         epic_index: usize,
         priority_index: usize,
         focused_field: TaskFormField,

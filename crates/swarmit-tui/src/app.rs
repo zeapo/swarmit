@@ -104,6 +104,9 @@ impl App {
                 self.modal = Some(Modal::TaskCreate {
                     title: String::new(),
                     cursor_pos: 0,
+                    description: vec![String::new()],
+                    desc_row: 0,
+                    desc_col: 0,
                     epic_index: 0,
                     priority_index: 1, // default Medium
                     focused_field: TaskFormField::Title,
@@ -194,6 +197,9 @@ impl App {
         let Some(Modal::TaskCreate {
             ref mut title,
             ref mut cursor_pos,
+            ref mut description,
+            ref mut desc_row,
+            ref mut desc_col,
             ref mut epic_index,
             ref mut priority_index,
             ref mut focused_field,
@@ -229,12 +235,103 @@ impl App {
                     }
                 }
                 KeyCode::Tab | KeyCode::Down => {
-                    *focused_field = TaskFormField::Epic;
+                    *focused_field = TaskFormField::Description;
                 }
                 KeyCode::BackTab | KeyCode::Up => {
                     *focused_field = TaskFormField::Priority;
                 }
                 KeyCode::Enter => {
+                    self.submit_task_create();
+                    return;
+                }
+                KeyCode::Char('s') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.submit_task_create();
+                    return;
+                }
+                KeyCode::Esc => {
+                    self.modal = None;
+                    return;
+                }
+                _ => {}
+            },
+            TaskFormField::Description => match code {
+                KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
+                    description[*desc_row].insert(*desc_col, c);
+                    *desc_col += c.len_utf8();
+                }
+                KeyCode::Enter => {
+                    let rest = description[*desc_row][*desc_col..].to_string();
+                    description[*desc_row].truncate(*desc_col);
+                    *desc_row += 1;
+                    description.insert(*desc_row, rest);
+                    *desc_col = 0;
+                }
+                KeyCode::Backspace => {
+                    if *desc_col > 0 {
+                        let prev = description[*desc_row][..*desc_col]
+                            .char_indices()
+                            .next_back()
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                        description[*desc_row].drain(prev..*desc_col);
+                        *desc_col = prev;
+                    } else if *desc_row > 0 {
+                        let current = description.remove(*desc_row);
+                        *desc_row -= 1;
+                        *desc_col = description[*desc_row].len();
+                        description[*desc_row].push_str(&current);
+                    }
+                }
+                KeyCode::Left => {
+                    if *desc_col > 0 {
+                        let prev = description[*desc_row][..*desc_col]
+                            .char_indices()
+                            .next_back()
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                        *desc_col = prev;
+                    } else if *desc_row > 0 {
+                        *desc_row -= 1;
+                        *desc_col = description[*desc_row].len();
+                    }
+                }
+                KeyCode::Right => {
+                    let line_len = description[*desc_row].len();
+                    if *desc_col < line_len {
+                        let next = description[*desc_row][*desc_col..]
+                            .char_indices()
+                            .nth(1)
+                            .map(|(i, _)| *desc_col + i)
+                            .unwrap_or(line_len);
+                        *desc_col = next;
+                    } else if *desc_row + 1 < description.len() {
+                        *desc_row += 1;
+                        *desc_col = 0;
+                    }
+                }
+                KeyCode::Up => {
+                    if *desc_row > 0 {
+                        *desc_row -= 1;
+                        *desc_col = (*desc_col).min(description[*desc_row].len());
+                    } else {
+                        *focused_field = TaskFormField::Title;
+                    }
+                }
+                KeyCode::Down => {
+                    if *desc_row + 1 < description.len() {
+                        *desc_row += 1;
+                        *desc_col = (*desc_col).min(description[*desc_row].len());
+                    } else {
+                        *focused_field = TaskFormField::Epic;
+                    }
+                }
+                KeyCode::Tab => {
+                    *focused_field = TaskFormField::Epic;
+                }
+                KeyCode::BackTab => {
+                    *focused_field = TaskFormField::Title;
+                }
+                KeyCode::Char('s') if modifiers.contains(KeyModifiers::CONTROL) => {
                     self.submit_task_create();
                     return;
                 }
@@ -259,9 +356,13 @@ impl App {
                     *focused_field = TaskFormField::Priority;
                 }
                 KeyCode::BackTab | KeyCode::Up => {
-                    *focused_field = TaskFormField::Title;
+                    *focused_field = TaskFormField::Description;
                 }
                 KeyCode::Enter => {
+                    self.submit_task_create();
+                    return;
+                }
+                KeyCode::Char('s') if modifiers.contains(KeyModifiers::CONTROL) => {
                     self.submit_task_create();
                     return;
                 }
@@ -292,6 +393,10 @@ impl App {
                     self.submit_task_create();
                     return;
                 }
+                KeyCode::Char('s') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.submit_task_create();
+                    return;
+                }
                 KeyCode::Esc => {
                     self.modal = None;
                     return;
@@ -302,13 +407,14 @@ impl App {
     }
 
     fn submit_task_create(&mut self) {
-        let (title, epic_index, priority_index) = match &self.modal {
+        let (title, description, epic_index, priority_index) = match &self.modal {
             Some(Modal::TaskCreate {
                 title,
+                description,
                 epic_index,
                 priority_index,
                 ..
-            }) => (title.clone(), *epic_index, *priority_index),
+            }) => (title.clone(), description.clone(), *epic_index, *priority_index),
             _ => return,
         };
 
@@ -353,12 +459,15 @@ impl App {
             _ => Priority::Urgent,
         };
 
+        let desc = description.join("\n");
+        let desc_opt = if desc.trim().is_empty() { None } else { Some(desc) };
+
         let op = Operation::new(
             agent,
             OperationKind::CreateTask {
                 id: next_id,
                 title,
-                description: None,
+                description: desc_opt,
                 priority,
                 epic_id,
             },

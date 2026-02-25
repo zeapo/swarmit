@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::events::{Modal, Screen};
+use crate::events::{Modal, Screen, TaskFormField};
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
@@ -15,8 +15,13 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let (screen_name, hints) = if let Some(modal) = &app.modal {
         match modal {
             Modal::QuitConfirm => ("Quit?", "y:quit  n/Esc:cancel"),
-            Modal::TaskCreate { .. } => {
-                ("New Task", "Tab:next field  Enter:create  Esc:cancel")
+            Modal::TaskCreate { focused_field, .. } => {
+                let hints = if *focused_field == TaskFormField::Description {
+                    "Tab:next  Enter:newline  Ctrl+S:save  Esc:cancel"
+                } else {
+                    "Tab:next  Enter:save  Ctrl+S:save  Esc:cancel"
+                };
+                ("New Task", hints)
             }
         }
     } else {
