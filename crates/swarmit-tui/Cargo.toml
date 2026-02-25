@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 swarmit-core = { workspace = true }
+chrono = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 notify-debouncer-mini = { workspace = true }

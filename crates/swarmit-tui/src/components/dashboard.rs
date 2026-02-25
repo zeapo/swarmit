@@ -1,3 +1,4 @@
+use chrono::Utc;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -85,19 +86,34 @@ fn render_summary(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(para, area);
 }
 
+fn format_relative(dt: chrono::DateTime<Utc>) -> String {
+    let now = Utc::now();
+    let dur = now.signed_duration_since(dt);
+    if dur.num_minutes() < 1 {
+        "just now".to_string()
+    } else if dur.num_minutes() < 60 {
+        format!("{}m ago", dur.num_minutes())
+    } else if dur.num_hours() < 24 {
+        format!("{}h ago", dur.num_hours())
+    } else {
+        format!("{}d ago", dur.num_days())
+    }
+}
+
 fn render_tree(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
 
-    // Column widths: indicator+ID, title, status, priority, meta
+    // Column widths: indicator+ID, title, status, priority, updated, meta
     let widths = [
         Constraint::Length(14),  // ID (with prefix for indent/indicator)
         Constraint::Min(24),     // Title
         Constraint::Length(13),  // Status
         Constraint::Length(10),  // Priority
+        Constraint::Length(12),  // Updated
         Constraint::Length(16),  // Task count / assignee
     ];
 
-    let header = Row::new(vec!["", "TITLE", "STATUS", "PRIORITY", ""])
+    let header = Row::new(vec!["", "TITLE", "STATUS", "PRIORITY", "UPDATED", ""])
         .style(theme.header_style())
         .height(1);
 
@@ -136,6 +152,7 @@ fn render_tree(f: &mut Frame, app: &App, area: Rect) {
                             .style(Style::default().fg(theme.status_color(&status_str))),
                         Cell::from(priority_str.clone())
                             .style(Style::default().fg(theme.priority_color(&priority_str))),
+                        Cell::from(""),  // no updated_at for epics
                         Cell::from(meta).style(theme.muted_style()),
                     ])
                     .style(style)
@@ -162,6 +179,8 @@ fn render_tree(f: &mut Frame, app: &App, area: Rect) {
                         theme.normal_style()
                     };
 
+                    let updated = format_relative(task.updated_at);
+
                     Row::new(vec![
                         Cell::from(id_cell),
                         Cell::from(task.title.clone()),
@@ -169,6 +188,7 @@ fn render_tree(f: &mut Frame, app: &App, area: Rect) {
                             .style(Style::default().fg(theme.status_color(&status_str))),
                         Cell::from(priority_str.clone())
                             .style(Style::default().fg(theme.priority_color(&priority_str))),
+                        Cell::from(updated).style(theme.muted_style()),
                         Cell::from(assignee).style(theme.muted_style()),
                     ])
                     .style(style)

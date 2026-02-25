@@ -514,12 +514,27 @@ impl App {
 
     /// Rebuild the flat `dashboard_rows` cache from current state.
     ///
-    /// Structure: epics (with their tasks when expanded), then a BacklogHeader
-    /// + BacklogTask entries for tasks that have no epic.
+    /// Structure: orphan tasks first (no epic), then epics with their tasks.
     pub fn rebuild_dashboard_rows(&mut self) {
         let mut rows = Vec::new();
 
-        // Iterate epics in BTreeMap order (deterministic).
+        // 1. Orphan tasks first (no epic), applying status filter.
+        let orphans: Vec<ItemId> = self
+            .state
+            .tasks
+            .values()
+            .filter(|t| {
+                t.epic_id.is_none()
+                    && self.dashboard_filter.map_or(true, |f| t.status == f)
+            })
+            .map(|t| t.id.clone())
+            .collect();
+
+        for task_id in orphans {
+            rows.push(DashboardRow::Task { id: task_id });
+        }
+
+        // 2. Epics (with their tasks when expanded), in BTreeMap order (deterministic).
         for (epic_id, epic) in &self.state.epics {
             rows.push(DashboardRow::Epic { id: epic_id.clone() });
 
@@ -534,22 +549,6 @@ impl App {
                     rows.push(DashboardRow::Task { id: task_id.clone() });
                 }
             }
-        }
-
-        // Collect orphan tasks (no epic), applying status filter.
-        let orphans: Vec<ItemId> = self
-            .state
-            .tasks
-            .values()
-            .filter(|t| {
-                t.epic_id.is_none()
-                    && self.dashboard_filter.map_or(true, |f| t.status == f)
-            })
-            .map(|t| t.id.clone())
-            .collect();
-
-        for task_id in orphans {
-            rows.push(DashboardRow::Task { id: task_id });
         }
 
         self.dashboard_rows = rows;
