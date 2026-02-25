@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     text::Span,
     widgets::{Block, Borders, Cell, Row, Table, TableState},
     Frame,
@@ -9,9 +9,10 @@ use ratatui::{
 use swarmit_core::models::{ItemId, Status};
 
 use crate::app::App;
-use crate::theme::Theme;
 
 pub fn render(f: &mut Frame, app: &App, area: Rect, epic_id: &ItemId) {
+    let theme = &app.theme;
+
     // Split into kanban columns: Todo | In Progress | Done | Blocked
     let columns = Layout::default()
         .direction(Direction::Horizontal)
@@ -45,7 +46,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect, epic_id: &ItemId) {
         let col_tasks: Vec<_> = all_tasks.iter().filter(|t| &t.status == status).collect();
 
         let header = Row::new(vec!["ID", "TITLE"])
-            .style(Theme::header())
+            .style(theme.header_style())
             .height(1);
 
         let rows: Vec<Row> = col_tasks
@@ -59,9 +60,9 @@ pub fn render(f: &mut Frame, app: &App, area: Rect, epic_id: &ItemId) {
                 let is_selected = global_pos == app.selected_index;
 
                 let style = if is_selected {
-                    Theme::selected()
+                    theme.selected_style()
                 } else {
-                    Theme::normal()
+                    theme.normal_style()
                 };
 
                 let assignee = task
@@ -78,7 +79,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect, epic_id: &ItemId) {
             })
             .collect();
 
-        let col_color = Theme::status_color(&status.to_string());
+        let col_color = theme.status_color(&status.to_string());
         let title = format!(" {} ({}) ", label, col_tasks.len());
 
         let widths = [Constraint::Length(10), Constraint::Min(10)];
@@ -89,9 +90,9 @@ pub fn render(f: &mut Frame, app: &App, area: Rect, epic_id: &ItemId) {
                 Block::default()
                     .borders(Borders::ALL)
                     .title(Span::styled(title, Style::default().fg(col_color)))
-                    .border_style(Style::default().fg(Color::DarkGray)),
+                    .border_style(theme.border_style()),
             )
-            .row_highlight_style(Theme::selected());
+            .row_highlight_style(theme.selected_style());
 
         let mut table_state = TableState::default();
         f.render_stateful_widget(table, columns[*col_idx], &mut table_state);

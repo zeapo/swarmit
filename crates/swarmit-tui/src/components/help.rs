@@ -1,6 +1,5 @@
 use ratatui::{
     layout::{Alignment, Rect},
-    style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
@@ -9,7 +8,7 @@ use ratatui::{
 use crate::theme::Theme;
 
 /// Renders a centered help overlay on top of the current screen.
-pub fn render(f: &mut Frame, area: Rect) {
+pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
     // Center a 60×22 popup
     let popup = centered_rect(60, 22, area);
 
@@ -24,33 +23,34 @@ pub fn render(f: &mut Frame, area: Rect) {
         ("1", "Jump to Dashboard"),
         ("2", "Jump to Backlog"),
         ("3", "Jump to Activity"),
+        ("n", "Create new task"),
         ("c", "Claim selected task"),
         ("s", "Change task status"),
         ("/", "Search (coming soon)"),
         ("?", "Toggle this help"),
-        ("q", "Quit"),
+        ("q", "Quit (with confirmation)"),
     ];
 
     let mut lines: Vec<Line> = vec![
         Line::from(""),
         Line::from(Span::styled(
             "  Swarmit Keyboard Reference",
-            Theme::title(),
+            theme.title_style(),
         )),
         Line::from(""),
     ];
 
     for (key, desc) in keybindings {
         lines.push(Line::from(vec![
-            Span::styled(format!("  {:<14}", key), Theme::help_key()),
-            Span::styled(format!("  {}", desc), Theme::normal()),
+            Span::styled(format!("  {:<14}", key), theme.help_key_style()),
+            Span::styled(format!("  {}", desc), theme.normal_style()),
         ]));
     }
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Press Esc or ? to close",
-        Style::default().fg(Color::DarkGray),
+        theme.muted_style(),
     )));
 
     let para = Paragraph::new(lines)
@@ -58,15 +58,15 @@ pub fn render(f: &mut Frame, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(Span::styled(" Help ", Theme::title()))
-                .border_style(Style::default().fg(Color::Cyan)),
+                .title(Span::styled(" Help ", theme.title_style()))
+                .border_style(theme.modal_border_style()),
         );
 
     f.render_widget(para, popup);
 }
 
 /// Returns a Rect centered in `r` with the given width and height.
-fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
+pub fn centered_rect(width: u16, height: u16, r: Rect) -> Rect {
     let x = r.x + r.width.saturating_sub(width) / 2;
     let y = r.y + r.height.saturating_sub(height) / 2;
     Rect {

@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
     Frame,
@@ -9,7 +9,6 @@ use ratatui::{
 use swarmit_core::models::Status;
 
 use crate::app::App;
-use crate::theme::Theme;
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
@@ -25,6 +24,8 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_summary(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
+
     let epics = app.state.epics.len();
     let tasks = app.state.tasks.len();
     let done = app.state.tasks_by_status(Status::Done).len();
@@ -40,46 +41,47 @@ fn render_summary(f: &mut Frame, app: &App, area: Rect) {
 
     let lines = vec![
         Line::from(vec![
-            Span::styled(format!(" {}", project_name), Theme::title()),
+            Span::styled(format!(" {}", project_name), theme.title_style()),
         ]),
         Line::from(vec![
             Span::styled(
                 format!(
                     " {} epics  {}  {} tasks  {}  {} done  {}  {} in progress  {}  {} blocked",
                     epics,
-                    Span::styled("│", Theme::muted()).content,
+                    Span::styled("│", theme.muted_style()).content,
                     tasks,
-                    Span::styled("│", Theme::muted()).content,
+                    Span::styled("│", theme.muted_style()).content,
                     done,
-                    Span::styled("│", Theme::muted()).content,
+                    Span::styled("│", theme.muted_style()).content,
                     in_progress,
-                    Span::styled("│", Theme::muted()).content,
+                    Span::styled("│", theme.muted_style()).content,
                     blocked
                 ),
-                Theme::muted(),
+                theme.muted_style(),
             ),
         ]),
         Line::from(""),
         Line::from(Span::styled(
             " Press Enter on an epic to open its board",
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            Style::default().fg(theme.muted_color()).add_modifier(Modifier::ITALIC),
         )),
     ];
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(Span::styled(" Overview ", Theme::title()))
-        .border_style(Style::default().fg(Color::DarkGray));
+        .title(Span::styled(" Overview ", theme.title_style()))
+        .border_style(theme.border_style());
 
     let para = Paragraph::new(lines).block(block);
     f.render_widget(para, area);
 }
 
 fn render_epic_table(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
     let epics: Vec<_> = app.state.epics.values().collect();
 
     let header = Row::new(vec!["ID", "STATUS", "PRIORITY", "TASKS", "TITLE"])
-        .style(Theme::header())
+        .style(theme.header_style())
         .height(1);
 
     let rows: Vec<Row> = epics
@@ -91,18 +93,18 @@ fn render_epic_table(f: &mut Frame, app: &App, area: Rect) {
             let task_count = epic.task_ids.len().to_string();
 
             let style = if i == app.selected_index {
-                Theme::selected()
+                theme.selected_style()
             } else {
-                Theme::normal()
+                theme.normal_style()
             };
 
             Row::new(vec![
                 Cell::from(epic.id.to_string()),
                 Cell::from(status_str.clone()).style(
-                    Style::default().fg(Theme::status_color(&status_str)),
+                    Style::default().fg(theme.status_color(&status_str)),
                 ),
                 Cell::from(priority_str.clone()).style(
-                    Style::default().fg(Theme::priority_color(&priority_str)),
+                    Style::default().fg(theme.priority_color(&priority_str)),
                 ),
                 Cell::from(task_count),
                 Cell::from(epic.title.clone()),
@@ -124,10 +126,10 @@ fn render_epic_table(f: &mut Frame, app: &App, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(Span::styled(" Epics ", Theme::title()))
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .title(Span::styled(" Epics ", theme.title_style()))
+                .border_style(theme.border_style()),
         )
-        .row_highlight_style(Theme::selected());
+        .row_highlight_style(theme.selected_style());
 
     let mut state = TableState::default();
     if !epics.is_empty() {

@@ -20,10 +20,15 @@ use ratatui::{
 };
 
 use app::App;
-use events::{Action, Screen};
+use events::{Action, Modal, Screen};
+use theme::Theme;
 
 /// Entry point for the TUI.
 pub fn run(project_root: &Path) -> Result<()> {
+    // Detect theme BEFORE entering raw mode — terminal-colorsaurus sends OSC
+    // escape sequences that require cooked mode for the terminal to respond.
+    let theme = Theme::detect();
+
     // Terminal setup
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -33,7 +38,7 @@ pub fn run(project_root: &Path) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Application state
-    let mut app = App::new(project_root.to_path_buf()).map_err(|e| {
+    let mut app = App::new(project_root.to_path_buf(), theme).map_err(|e| {
         // Restore terminal before propagating error
         let _ = restore_terminal();
         e
@@ -91,7 +96,15 @@ fn run_loop(
                 Screen::Help => {
                     // Render dashboard underneath help overlay
                     components::dashboard::render(f, app, main_area);
-                    components::help::render(f, main_area);
+                    components::help::render(f, &app.theme, main_area);
+                }
+            }
+
+            // Render modal overlay (if any) on top of the current screen
+            if let Some(modal) = &app.modal {
+                match modal {
+                    Modal::QuitConfirm => components::quit_confirm::render(f, &app.theme, main_area),
+                    Modal::TaskCreate { .. } => components::task_create::render(f, app, main_area),
                 }
             }
 
@@ -101,8 +114,17 @@ fn run_loop(
         // Poll for keyboard events (100ms timeout = ~10fps)
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                let action = key_to_action(key.code, key.modifiers, &app.screen);
-                app.handle_action(action);
+                // Ctrl+C always quits immediately (no dialog)
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    return Ok(());
+                }
+                // When a modal is open, route all input to the modal handler
+                if app.modal.is_some() {
+                    app.handle_modal_key(key.code, key.modifiers);
+                } else {
+                    let action = key_to_action(key.code, key.modifiers, &app.screen);
+                    app.handle_action(action);
+                }
 
                 if app.should_quit {
                     return Ok(());
@@ -115,14 +137,10 @@ fn run_loop(
     }
 }
 
-fn key_to_action(code: KeyCode, modifiers: KeyModifiers, screen: &Screen) -> Action {
-    // Ctrl+C always quits
-    if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-        return Action::Quit;
-    }
-
+fn key_to_action(code: KeyCode, _modifiers: KeyModifiers, screen: &Screen) -> Action {
     match code {
-        KeyCode::Char('q') => Action::Quit,
+        KeyCode::Char('q') => Action::QuitRequest,
+        KeyCode::Char('n') => Action::NewTask,
         KeyCode::Char('j') | KeyCode::Down => Action::Down,
         KeyCode::Char('k') | KeyCode::Up => Action::Up,
         KeyCode::Enter => Action::Select,

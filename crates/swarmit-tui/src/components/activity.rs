@@ -1,6 +1,6 @@
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState},
     Frame,
@@ -9,9 +9,10 @@ use ratatui::{
 use swarmit_core::events::log::read_operations;
 
 use crate::app::App;
-use crate::theme::Theme;
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
+
     let ops = read_operations(&app.log_path).unwrap_or_default();
 
     let items: Vec<ListItem> = ops
@@ -32,13 +33,13 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
             ListItem::new(Line::from(vec![
                 Span::styled(
                     format!(" {} ", timestamp),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(theme.muted_color()),
                 ),
                 Span::styled(
                     format!("{:<14} ", op.agent),
-                    Style::default().fg(Color::Cyan),
+                    Style::default().fg(theme.primary()),
                 ),
-                Span::styled(kind_short, Theme::normal()),
+                Span::styled(kind_short, theme.normal_style()),
             ]))
         })
         .collect();
@@ -50,11 +51,11 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                 .borders(Borders::ALL)
                 .title(Span::styled(
                     format!(" Activity Log ({} operations) ", total),
-                    Theme::title(),
+                    theme.title_style(),
                 ))
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(theme.border_style()),
         )
-        .highlight_style(Theme::selected());
+        .highlight_style(theme.selected_style());
 
     let mut state = ListState::default();
     if total > 0 {

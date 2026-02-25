@@ -1,27 +1,38 @@
 use ratatui::{
     layout::Rect,
+    style::Modifier,
     text::{Line, Span},
     widgets::Paragraph,
     Frame,
 };
 
 use crate::app::App;
-use crate::events::Screen;
-use crate::theme::Theme;
+use crate::events::{Modal, Screen};
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
-    let (screen_name, hints) = match &app.screen {
-        Screen::Dashboard => (
-            "Dashboard",
-            "j/k:move  Enter:open  1:dashboard  2:backlog  3:activity  ?:help  q:quit",
-        ),
-        Screen::Board { .. } => (
-            "Board",
-            "j/k:move  Enter:detail  c:claim  s:status  Esc:back  ?:help",
-        ),
-        Screen::TaskDetail { .. } => ("Task Detail", "Esc:back  c:claim  s:status  ?:help"),
-        Screen::Activity => ("Activity", "j/k:scroll  Esc:back  ?:help"),
-        Screen::Help => ("Help", "Esc:close"),
+    let theme = &app.theme;
+
+    let (screen_name, hints) = if let Some(modal) = &app.modal {
+        match modal {
+            Modal::QuitConfirm => ("Quit?", "y:quit  n/Esc:cancel"),
+            Modal::TaskCreate { .. } => {
+                ("New Task", "Tab:next field  Enter:create  Esc:cancel")
+            }
+        }
+    } else {
+        match &app.screen {
+            Screen::Dashboard => (
+                "Dashboard",
+                "j/k:move  Enter:open  n:new task  1:dashboard  2:backlog  3:activity  ?:help  q:quit",
+            ),
+            Screen::Board { .. } => (
+                "Board",
+                "j/k:move  Enter:detail  n:new task  c:claim  s:status  Esc:back  ?:help",
+            ),
+            Screen::TaskDetail { .. } => ("Task Detail", "Esc:back  c:claim  s:status  ?:help"),
+            Screen::Activity => ("Activity", "j/k:scroll  Esc:back  ?:help"),
+            Screen::Help => ("Help", "Esc:close"),
+        }
     };
 
     let project_name = app
@@ -34,11 +45,11 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let line = Line::from(vec![
         Span::styled(
             format!(" swarmit | {} | {} ", project_name, screen_name),
-            Theme::status_bar().add_modifier(ratatui::style::Modifier::BOLD),
+            theme.status_bar_style().add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!(" {} ", hints), Theme::muted()),
+        Span::styled(format!(" {} ", hints), theme.status_bar_hint_style()),
     ]);
 
-    let para = Paragraph::new(line).style(Theme::status_bar());
+    let para = Paragraph::new(line).style(theme.status_bar_style());
     f.render_widget(para, area);
 }

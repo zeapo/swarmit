@@ -37,6 +37,8 @@ clap = { version = "4", features = ["derive", "env"] }
 ratatui = "0.29"
 crossterm = "0.28"
 notify-debouncer-mini = "0.4"
+catppuccin = { version = "2", features = ["ratatui"] }
+terminal-colorsaurus = "1"
 
 # Async
 tokio = { version = "1", features = ["full"] }

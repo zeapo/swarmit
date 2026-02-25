@@ -10,3 +10,5 @@ crossterm = { workspace = true }
 notify-debouncer-mini = { workspace = true }
 notify = "6"
 anyhow = { workspace = true }
+catppuccin = { workspace = true }
+terminal-colorsaurus = { workspace = true }

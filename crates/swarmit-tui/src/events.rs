@@ -18,6 +18,8 @@ pub enum Action {
     Select,
     Back,
     Quit,
+    QuitRequest,
+    NewTask,
     Help,
     Search,
     ClaimTask,
@@ -27,4 +29,26 @@ pub enum Action {
     GotoActivity,
     Refresh,
     None,
+}
+
+/// Which form field has focus in the task-creation modal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskFormField {
+    Title,
+    Epic,
+    Priority,
+}
+
+/// Active modal overlay (mutually exclusive with normal screen interaction).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Modal {
+    QuitConfirm,
+    TaskCreate {
+        title: String,
+        cursor_pos: usize,
+        epic_index: usize,
+        priority_index: usize,
+        focused_field: TaskFormField,
+        error: Option<String>,
+    },
 }

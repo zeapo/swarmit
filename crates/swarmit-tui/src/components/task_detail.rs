@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
@@ -9,11 +9,12 @@ use ratatui::{
 use swarmit_core::models::ItemId;
 
 use crate::app::App;
-use crate::theme::Theme;
 
 pub fn render(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
+    let theme = &app.theme;
+
     let Some(task) = app.state.tasks.get(task_id) else {
-        let msg = Paragraph::new("Task not found").style(Theme::muted());
+        let msg = Paragraph::new("Task not found").style(theme.muted_style());
         f.render_widget(msg, area);
         return;
     };
@@ -32,42 +33,42 @@ pub fn render(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
 
     let mut meta_lines = vec![
         Line::from(vec![
-            Span::styled(" ID:       ", Theme::muted()),
-            Span::styled(task.id.to_string(), Theme::title()),
+            Span::styled(" ID:       ", theme.muted_style()),
+            Span::styled(task.id.to_string(), theme.title_style()),
         ]),
         Line::from(vec![
-            Span::styled(" Title:    ", Theme::muted()),
-            Span::styled(task.title.clone(), Theme::normal()),
+            Span::styled(" Title:    ", theme.muted_style()),
+            Span::styled(task.title.clone(), theme.normal_style()),
         ]),
         Line::from(vec![
-            Span::styled(" Status:   ", Theme::muted()),
+            Span::styled(" Status:   ", theme.muted_style()),
             Span::styled(
                 status_str.clone(),
-                Style::default().fg(Theme::status_color(&status_str)),
+                Style::default().fg(theme.status_color(&status_str)),
             ),
         ]),
         Line::from(vec![
-            Span::styled(" Priority: ", Theme::muted()),
+            Span::styled(" Priority: ", theme.muted_style()),
             Span::styled(
                 priority_str.clone(),
-                Style::default().fg(Theme::priority_color(&priority_str)),
+                Style::default().fg(theme.priority_color(&priority_str)),
             ),
         ]),
     ];
 
     if let Some(epic_id) = &task.epic_id {
         meta_lines.push(Line::from(vec![
-            Span::styled(" Epic:     ", Theme::muted()),
-            Span::styled(epic_id.to_string(), Theme::normal()),
+            Span::styled(" Epic:     ", theme.muted_style()),
+            Span::styled(epic_id.to_string(), theme.normal_style()),
         ]));
     }
 
     if let Some(assignee) = &task.assignee {
         meta_lines.push(Line::from(vec![
-            Span::styled(" Assignee: ", Theme::muted()),
+            Span::styled(" Assignee: ", theme.muted_style()),
             Span::styled(
                 format!("@{}", assignee),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(theme.primary()),
             ),
         ]));
     }
@@ -76,12 +77,12 @@ pub fn render(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
     let rels = app.state.relationships_for(task_id);
     if !rels.is_empty() {
         meta_lines.push(Line::from(""));
-        meta_lines.push(Line::from(Span::styled(" Relationships:", Theme::header())));
+        meta_lines.push(Line::from(Span::styled(" Relationships:", theme.header_style())));
         for r in &rels {
             meta_lines.push(Line::from(vec![
-                Span::styled("   ", Theme::normal()),
-                Span::styled(r.rel_type.to_string(), Style::default().fg(Color::Yellow)),
-                Span::styled(format!(" → {}", r.to), Theme::normal()),
+                Span::styled("   ", theme.normal_style()),
+                Span::styled(r.rel_type.to_string(), Style::default().fg(theme.warning())),
+                Span::styled(format!(" → {}", r.to), theme.normal_style()),
             ]));
         }
     }
@@ -90,8 +91,8 @@ pub fn render(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(Span::styled(" Task Details ", Theme::title()))
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .title(Span::styled(" Task Details ", theme.title_style()))
+                .border_style(theme.border_style()),
         )
         .wrap(Wrap { trim: true });
     f.render_widget(meta, chunks[0]);
@@ -111,8 +112,8 @@ pub fn render(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(Span::styled(" Description ", Theme::title()))
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .title(Span::styled(" Description ", theme.title_style()))
+                .border_style(theme.border_style()),
         )
         .wrap(Wrap { trim: false });
     f.render_widget(desc, body_chunks[0]);
@@ -120,7 +121,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
     // Comments
     let comments = app.state.comments_for(task_id);
     let comment_lines: Vec<Line> = if comments.is_empty() {
-        vec![Line::from(Span::styled("No comments.", Theme::muted()))]
+        vec![Line::from(Span::styled("No comments.", theme.muted_style()))]
     } else {
         comments
             .iter()
@@ -133,7 +134,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
                                 c.author,
                                 c.created_at.format("%Y-%m-%d %H:%M")
                             ),
-                            Style::default().fg(Color::Cyan),
+                            Style::default().fg(theme.primary()),
                         ),
                     ]),
                     Line::from(format!("  {}", c.body)),
@@ -149,9 +150,9 @@ pub fn render(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
                 .borders(Borders::ALL)
                 .title(Span::styled(
                     format!(" Comments ({}) ", comments.len()),
-                    Theme::title(),
+                    theme.title_style(),
                 ))
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(theme.border_style()),
         )
         .wrap(Wrap { trim: false });
     f.render_widget(comments_widget, body_chunks[1]);
