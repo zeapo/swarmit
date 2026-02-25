@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use commands::{
     comment::CommentArgs, compact::CompactArgs, epic::EpicArgs, init::InitArgs,
-    link::LinkArgs, log::LogArgs, task::TaskArgs,
+    link::LinkArgs, log::LogArgs, sync::SyncArgs, task::TaskArgs,
 };
 
 #[derive(Parser, Debug)]
@@ -53,6 +53,8 @@ pub enum Commands {
     Log(LogArgs),
     /// Compact the operation log
     Compact(CompactArgs),
+    /// Materialize all markdown files from the current state
+    Sync(SyncArgs),
 }
 
 pub fn run(cli: Cli) -> Result<()> {
@@ -64,6 +66,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Some(Commands::Comment(args)) => commands::comment::run(args, &cli),
         Some(Commands::Log(args)) => commands::log::run(args, &cli),
         Some(Commands::Compact(args)) => commands::compact::run(args, &cli),
+        Some(Commands::Sync(args)) => commands::sync::run(args, &cli),
         None => {
             // No subcommand — caller should have launched TUI or printed help
             Err(anyhow::anyhow!(
