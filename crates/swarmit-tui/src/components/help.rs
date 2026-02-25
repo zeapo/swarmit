@@ -10,7 +10,7 @@ use crate::theme::Theme;
 /// Renders a centered help overlay on top of the current screen.
 pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
     // Center a 60×24 popup
-    let popup = centered_rect(60, 24, area);
+    let popup = centered_rect(60, 26, area);
 
     // Clear the area behind the popup
     f.render_widget(Clear, popup);
@@ -19,7 +19,9 @@ pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
         ("j / ↓", "Move down"),
         ("k / ↑", "Move up"),
         ("Enter", "Select / drill into item"),
-        ("Space", "Expand/collapse epic (Dashboard)"),
+        ("Space", "Toggle expand/collapse epic (Dashboard)"),
+        ("h", "Collapse epic (Dashboard)"),
+        ("l", "Expand epic (Dashboard)"),
         ("f", "Open filter dialog (Dashboard)"),
         ("Esc", "Go back"),
         ("1", "Jump to Dashboard"),

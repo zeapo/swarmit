@@ -151,6 +151,8 @@ fn key_to_action(code: KeyCode, _modifiers: KeyModifiers, screen: &Screen) -> Ac
         KeyCode::Char('k') | KeyCode::Up => Action::Up,
         KeyCode::Enter => Action::Select,
         KeyCode::Char(' ') if matches!(screen, Screen::Dashboard) => Action::ToggleCollapse,
+        KeyCode::Char('h') if matches!(screen, Screen::Dashboard) => Action::CollapseEpic,
+        KeyCode::Char('l') if matches!(screen, Screen::Dashboard) => Action::ExpandEpic,
         KeyCode::Char('f') if matches!(screen, Screen::Dashboard) => Action::OpenFilterDialog,
         KeyCode::Char('s') if matches!(screen, Screen::Dashboard) => Action::OpenSortDialog,
         KeyCode::Esc => Action::Back,

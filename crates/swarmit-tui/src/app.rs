@@ -89,6 +89,9 @@ pub struct App {
 
     // Cached flattened tree rows for the dashboard (rebuilt on state changes).
     pub dashboard_rows: Vec<DashboardRow>,
+
+    /// Navigation history stack — used by `go_back()` to return to the previous screen.
+    pub screen_history: Vec<Screen>,
 }
 
 impl App {
@@ -131,6 +134,7 @@ impl App {
             dashboard_filter: None,
             dashboard_sort: SortOption::default(),
             dashboard_rows: Vec::new(),
+            screen_history: Vec::new(),
         };
         app.rebuild_dashboard_rows();
         Ok(app)
@@ -161,42 +165,43 @@ impl App {
             Action::Down => self.move_down(),
             Action::Select => self.select_item(),
             Action::GotoDashboard => {
-                self.screen = Screen::Dashboard;
-                self.selected_index = 0;
+                self.navigate_to(Screen::Dashboard);
                 self.rebuild_dashboard_rows();
             }
             Action::GotoActivity => {
-                self.screen = Screen::Activity;
-                self.selected_index = 0;
+                self.navigate_to(Screen::Activity);
             }
             Action::Help => {
-                self.screen = Screen::Help;
+                self.navigate_to(Screen::Help);
             }
             Action::Refresh => {
                 self.poll_log_changes();
             }
             Action::ToggleCollapse => {
                 if matches!(self.screen, Screen::Dashboard) {
-                    // Find the epic at the current selection position.
-                    if let Some(row) = self.dashboard_rows.get(self.selected_index).cloned() {
-                        let epic_id = match row {
-                            DashboardRow::Epic { id } => Some(id),
-                            DashboardRow::Task { id } => {
-                                // Find the epic that owns this task.
-                                self.state
-                                    .tasks
-                                    .get(&id)
-                                    .and_then(|t| t.epic_id.clone())
-                            }
-                        };
-                        if let Some(eid) = epic_id {
-                            if self.collapsed_epics.contains(&eid) {
-                                self.collapsed_epics.remove(&eid);
-                            } else {
-                                self.collapsed_epics.insert(eid);
-                            }
-                            self.rebuild_dashboard_rows();
+                    if let Some(eid) = self.epic_id_at_selection() {
+                        if self.collapsed_epics.contains(&eid) {
+                            self.collapsed_epics.remove(&eid);
+                        } else {
+                            self.collapsed_epics.insert(eid);
                         }
+                        self.rebuild_dashboard_rows();
+                    }
+                }
+            }
+            Action::CollapseEpic => {
+                if matches!(self.screen, Screen::Dashboard) {
+                    if let Some(eid) = self.epic_id_at_selection() {
+                        self.collapsed_epics.insert(eid);
+                        self.rebuild_dashboard_rows();
+                    }
+                }
+            }
+            Action::ExpandEpic => {
+                if matches!(self.screen, Screen::Dashboard) {
+                    if let Some(eid) = self.epic_id_at_selection() {
+                        self.collapsed_epics.remove(&eid);
+                        self.rebuild_dashboard_rows();
                     }
                 }
             }
@@ -606,20 +611,15 @@ impl App {
         }
     }
 
+    /// Push the current screen onto the history stack and navigate to `screen`.
+    fn navigate_to(&mut self, screen: Screen) {
+        self.screen_history.push(self.screen.clone());
+        self.screen = screen;
+        self.selected_index = 0;
+    }
+
     fn go_back(&mut self) {
-        self.screen = match &self.screen {
-            Screen::Help => Screen::Dashboard,
-            Screen::TaskDetail { task_id } => self
-                .state
-                .tasks
-                .get(task_id)
-                .and_then(|t| t.epic_id.clone())
-                .map(|epic_id| Screen::Board { epic_id })
-                .unwrap_or(Screen::Dashboard),
-            Screen::Board { .. } => Screen::Dashboard,
-            Screen::Activity => Screen::Dashboard,
-            Screen::Dashboard => Screen::Dashboard,
-        };
+        self.screen = self.screen_history.pop().unwrap_or(Screen::Dashboard);
         self.selected_index = 0;
         if self.screen == Screen::Dashboard {
             self.rebuild_dashboard_rows();
@@ -713,6 +713,20 @@ impl App {
         }
     }
 
+    /// Returns the epic id associated with the currently selected dashboard row,
+    /// or `None` if the selection is outside the dashboard or on an orphan task.
+    fn epic_id_at_selection(&self) -> Option<ItemId> {
+        let row = self.dashboard_rows.get(self.selected_index)?;
+        match row {
+            DashboardRow::Epic { id } => Some(id.clone()),
+            DashboardRow::Task { id } => self
+                .state
+                .tasks
+                .get(id)
+                .and_then(|t| t.epic_id.clone()),
+        }
+    }
+
     fn move_up(&mut self) {
         self.selected_index = self.selected_index.saturating_sub(1);
     }
@@ -729,12 +743,10 @@ impl App {
             Screen::Dashboard => {
                 match self.dashboard_rows.get(self.selected_index).cloned() {
                     Some(DashboardRow::Epic { id }) => {
-                        self.screen = Screen::Board { epic_id: id };
-                        self.selected_index = 0;
+                        self.navigate_to(Screen::Board { epic_id: id });
                     }
                     Some(DashboardRow::Task { id }) => {
-                        self.screen = Screen::TaskDetail { task_id: id };
-                        self.selected_index = 0;
+                        self.navigate_to(Screen::TaskDetail { task_id: id });
                     }
                     None => {}
                 }
@@ -749,10 +761,9 @@ impl App {
                     .map(|t| t.id.clone())
                     .collect();
                 if let Some(task_id) = tasks.get(self.selected_index) {
-                    self.screen = Screen::TaskDetail {
+                    self.navigate_to(Screen::TaskDetail {
                         task_id: task_id.clone(),
-                    };
-                    self.selected_index = 0;
+                    });
                 }
             }
             _ => {}
@@ -905,6 +916,107 @@ mod tests {
         AgentId::new("test-agent").unwrap()
     }
 
+    fn setup_app_with_epic() -> (App, ItemId, ItemId) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+
+        let epic_id = ItemId::new("EPIC", 1);
+        let task_id = ItemId::new("TASK", 1);
+
+        let _ = app.state.apply(Operation::new(
+            make_agent(),
+            OperationKind::CreateEpic {
+                id: epic_id.clone(),
+                title: "Test Epic".to_string(),
+                description: None,
+                priority: Priority::Medium,
+            },
+        ));
+        let _ = app.state.apply(Operation::new(
+            make_agent(),
+            OperationKind::CreateTask {
+                id: task_id.clone(),
+                title: "Test Task".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: Some(epic_id.clone()),
+            },
+        ));
+        app.rebuild_dashboard_rows();
+        // Select the epic row (first row)
+        app.selected_index = 0;
+        (app, epic_id, task_id)
+    }
+
+    #[test]
+    fn collapse_epic_hides_child_tasks() {
+        let (mut app, epic_id, _task_id) = setup_app_with_epic();
+
+        // Initially expanded — epic row + task row = 2 rows
+        assert_eq!(app.dashboard_rows.len(), 2);
+        assert!(!app.collapsed_epics.contains(&epic_id));
+
+        app.handle_action(Action::CollapseEpic);
+
+        assert!(app.collapsed_epics.contains(&epic_id));
+        // Collapsed — only the epic header row remains
+        assert_eq!(app.dashboard_rows.len(), 1);
+        assert!(matches!(&app.dashboard_rows[0], DashboardRow::Epic { id } if id == &epic_id));
+    }
+
+    #[test]
+    fn expand_epic_shows_child_tasks() {
+        let (mut app, epic_id, task_id) = setup_app_with_epic();
+
+        // Pre-collapse the epic
+        app.collapsed_epics.insert(epic_id.clone());
+        app.rebuild_dashboard_rows();
+        assert_eq!(app.dashboard_rows.len(), 1);
+
+        app.handle_action(Action::ExpandEpic);
+
+        assert!(!app.collapsed_epics.contains(&epic_id));
+        assert_eq!(app.dashboard_rows.len(), 2);
+        assert!(matches!(&app.dashboard_rows[1], DashboardRow::Task { id } if id == &task_id));
+    }
+
+    #[test]
+    fn collapse_epic_is_idempotent() {
+        let (mut app, epic_id, _) = setup_app_with_epic();
+
+        app.handle_action(Action::CollapseEpic);
+        app.handle_action(Action::CollapseEpic);
+
+        // Still collapsed — second call is a no-op on the set
+        assert!(app.collapsed_epics.contains(&epic_id));
+        assert_eq!(app.dashboard_rows.len(), 1);
+    }
+
+    #[test]
+    fn expand_epic_is_idempotent() {
+        let (mut app, epic_id, _) = setup_app_with_epic();
+
+        // Already expanded; calling ExpandEpic twice should be harmless
+        app.handle_action(Action::ExpandEpic);
+        app.handle_action(Action::ExpandEpic);
+
+        assert!(!app.collapsed_epics.contains(&epic_id));
+        assert_eq!(app.dashboard_rows.len(), 2);
+    }
+
+    #[test]
+    fn collapse_expand_from_task_row_uses_parent_epic() {
+        let (mut app, epic_id, _task_id) = setup_app_with_epic();
+
+        // Select the task row (index 1) instead of the epic row
+        app.selected_index = 1;
+
+        app.handle_action(Action::CollapseEpic);
+
+        assert!(app.collapsed_epics.contains(&epic_id));
+        assert_eq!(app.dashboard_rows.len(), 1);
+    }
+
     #[test]
     fn dashboard_rows_sorted_by_recent_update_by_default() {
         let dir = tempfile::tempdir().unwrap();
@@ -944,6 +1056,75 @@ mod tests {
         // Row order should have id2 before id1.
         assert_eq!(app.dashboard_sort, SortOption::RecentUpdate);
         assert!(app.dashboard_rows.len() >= 2);
+    }
+
+    #[test]
+    fn back_from_dashboard_task_detail_returns_to_dashboard() {
+        // Navigate: Dashboard → TaskDetail (from dashboard) → Esc → Dashboard
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+
+        let task_id = ItemId::new("TASK", 1);
+        let _ = app.state.apply(Operation::new(
+            make_agent(),
+            OperationKind::CreateTask {
+                id: task_id.clone(),
+                title: "Orphan task".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            },
+        ));
+        app.rebuild_dashboard_rows();
+
+        // Navigate from dashboard directly to a task detail
+        app.navigate_to(Screen::TaskDetail { task_id: task_id.clone() });
+        assert_eq!(app.screen, Screen::TaskDetail { task_id: task_id.clone() });
+        assert_eq!(app.screen_history, vec![Screen::Dashboard]);
+
+        // Pressing Esc should pop back to Dashboard, not Board
+        app.handle_action(Action::Back);
+        assert_eq!(app.screen, Screen::Dashboard);
+        assert!(app.screen_history.is_empty());
+    }
+
+    #[test]
+    fn back_from_board_task_detail_returns_to_board() {
+        // Navigate: Dashboard → Board → TaskDetail → Esc → Board
+        let (mut app, epic_id, task_id) = setup_app_with_epic();
+
+        // Navigate to Board
+        app.navigate_to(Screen::Board { epic_id: epic_id.clone() });
+        // Navigate to TaskDetail from Board
+        app.navigate_to(Screen::TaskDetail { task_id: task_id.clone() });
+
+        assert_eq!(
+            app.screen_history,
+            vec![
+                Screen::Dashboard,
+                Screen::Board { epic_id: epic_id.clone() }
+            ]
+        );
+
+        // Esc should pop back to Board
+        app.handle_action(Action::Back);
+        assert_eq!(app.screen, Screen::Board { epic_id: epic_id.clone() });
+        assert_eq!(app.screen_history, vec![Screen::Dashboard]);
+    }
+
+    #[test]
+    fn back_from_dashboard_is_noop() {
+        // Pressing Esc with an empty history stays on Dashboard
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+
+        assert_eq!(app.screen, Screen::Dashboard);
+        assert!(app.screen_history.is_empty());
+
+        app.handle_action(Action::Back);
+
+        assert_eq!(app.screen, Screen::Dashboard);
+        assert!(app.screen_history.is_empty());
     }
 
     #[test]

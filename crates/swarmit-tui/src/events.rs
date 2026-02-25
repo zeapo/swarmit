@@ -28,6 +28,8 @@ pub enum Action {
     GotoActivity,
     Refresh,
     ToggleCollapse,
+    CollapseEpic,
+    ExpandEpic,
     OpenFilterDialog,
     FilterDialogMove(i8),
     FilterDialogConfirm,
