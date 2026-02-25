@@ -105,6 +105,9 @@ fn run_loop(
                 match modal {
                     Modal::QuitConfirm => components::quit_confirm::render(f, &app.theme, main_area),
                     Modal::TaskCreate { .. } => components::task_create::render(f, app, main_area),
+                    Modal::FilterSelect { selected_index } => {
+                        components::filter_select::render(f, app, *selected_index, main_area)
+                    }
                 }
             }
 

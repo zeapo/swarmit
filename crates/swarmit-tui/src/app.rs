@@ -184,6 +184,7 @@ impl App {
         match &self.modal {
             Some(Modal::QuitConfirm) => self.handle_quit_confirm_key(code),
             Some(Modal::TaskCreate { .. }) => self.handle_task_form_key(code, modifiers),
+            Some(Modal::FilterSelect { .. }) => {} // handled in lib.rs key dispatch (Task 4)
             None => {}
         }
     }

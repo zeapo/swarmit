@@ -23,6 +23,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                 };
                 ("New Task".to_string(), hints)
             }
+            Modal::FilterSelect { .. } => ("Dashboard".to_string(), "j/k:move  Enter:select  Esc:cancel"),
         }
     } else {
         match &app.screen {
