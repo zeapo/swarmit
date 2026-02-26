@@ -105,10 +105,6 @@ pub enum OperationKind {
         body: String,
     },
 
-    // ── Maintenance ───────────────────────────────────────────────────────
-    Snapshot {
-        sequence: u64,
-    },
 }
 
 impl Operation {

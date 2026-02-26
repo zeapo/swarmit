@@ -6,7 +6,7 @@ use swarmit_core::events::log::append_operation;
 use swarmit_core::events::locking::try_append_with_timeout;
 use swarmit_core::events::operations::{Operation, OperationKind};
 use swarmit_core::models::{AgentId, ItemId, Priority, Status};
-use swarmit_core::state::ProjectState;
+use swarmit_core::state::{write_snapshot, ProjectState, SnapshotV1};
 
 fn agent() -> AgentId {
     AgentId::new("test-agent").unwrap()
@@ -244,32 +244,31 @@ fn self_link_rejected() {
     assert!(err.to_string().contains("TASK-001"));
 }
 
-/// Compaction: log is replaced with a snapshot, state survives.
+/// Compaction: snapshot file is written and log is truncated, state survives.
 #[test]
 fn compaction_preserves_state() {
-
     let dir = TempDir::new().unwrap();
-    let (log, lock) = setup_project(&dir);
-    let bak = log.parent().unwrap().join("operations.log.bak");
+    let (log, _lock) = setup_project(&dir);
+    let swarmit_dir = log.parent().unwrap();
+    let bak = swarmit_dir.join("operations.log.bak");
+    let snapshot_path = swarmit_dir.join("state.snap");
 
     // Write some tasks
     for i in 1..=5u32 {
         let task_id = ItemId::new("TASK", i);
-        try_append_with_timeout(&lock, || {
-            append_operation(
-                &log,
-                &Operation::new(
-                    agent(),
-                    OperationKind::CreateTask {
-                        id: task_id.clone(),
-                        title: format!("Task {}", i),
-                        description: None,
-                        priority: Priority::Medium,
-                        epic_id: None,
-                    },
-                ),
-            )
-        })
+        append_operation(
+            &log,
+            &Operation::new(
+                agent(),
+                OperationKind::CreateTask {
+                    id: task_id.clone(),
+                    title: format!("Task {}", i),
+                    description: None,
+                    priority: Priority::Medium,
+                    epic_id: None,
+                },
+            ),
+        )
         .unwrap();
     }
 
@@ -277,35 +276,32 @@ fn compaction_preserves_state() {
     assert_eq!(before.tasks.len(), 5);
     let original_log_size = std::fs::metadata(&log).unwrap().len();
 
-    // Simulate compaction (same logic as compact.rs)
-    try_append_with_timeout(&lock, || {
-        let ops = swarmit_core::events::log::read_operations(&log)?;
-        let mut state = ProjectState::new();
-        for op in ops {
-            state.apply(op)?;
-        }
-        if log.exists() {
-            std::fs::copy(&log, &bak).map_err(swarmit_core::SwarmitError::Io)?;
-            std::fs::remove_file(&log).map_err(swarmit_core::SwarmitError::Io)?;
-        }
-        let snapshot_op = Operation::new(
-            agent(),
-            OperationKind::Snapshot { sequence: state.sequence },
-        );
-        append_operation(&log, &snapshot_op)
-    })
-    .unwrap();
+    // Simulate compaction (same logic as compact.rs --truncate)
+    let log_len = std::fs::metadata(&log).unwrap().len();
+    let state = ProjectState::from_log(&log).unwrap();
+    write_snapshot(&snapshot_path, &SnapshotV1 { log_offset: log_len, state }).unwrap();
+
+    // Backup and truncate the log
+    std::fs::copy(&log, &bak).unwrap();
+    std::fs::write(&log, b"").unwrap();
+
+    // Rewrite snapshot with offset 0 since the log is now empty
+    if let Ok(Some(mut snap)) = swarmit_core::state::read_snapshot(&snapshot_path) {
+        snap.log_offset = 0;
+        write_snapshot(&snapshot_path, &snap).unwrap();
+    }
 
     // Backup exists
     assert!(bak.exists());
 
-    // Compacted log is smaller
+    // Truncated log is empty (smaller than original)
     let compacted_size = std::fs::metadata(&log).unwrap().len();
     assert!(compacted_size < original_log_size);
 
-    // State after compaction only has snapshot marker — tasks are gone
-    // (compaction is a log-only operation; the state must be rebuilt from state/ dir
-    // or from the full backup for recovery purposes)
-    let after = ProjectState::from_log(&log).unwrap();
-    assert_eq!(after.tasks.len(), 0); // Snapshot doesn't replay tasks
+    // State from the snapshot has all 5 tasks preserved
+    let snap = swarmit_core::state::read_snapshot(&snapshot_path)
+        .unwrap()
+        .unwrap();
+    assert_eq!(snap.state.tasks.len(), 5);
+    assert_eq!(snap.log_offset, 0);
 }

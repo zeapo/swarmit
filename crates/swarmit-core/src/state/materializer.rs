@@ -320,9 +320,6 @@ impl ProjectState {
                     .push(comment);
             }
 
-            OperationKind::Snapshot { sequence } => {
-                self.sequence = sequence;
-            }
         }
 
         Ok(())
