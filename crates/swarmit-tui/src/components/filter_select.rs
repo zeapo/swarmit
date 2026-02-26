@@ -6,8 +6,8 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, FILTER_OPTIONS};
 use super::help::centered_rect;
+use crate::app::{App, FILTER_OPTIONS};
 
 /// Renders a small centered filter selection dialog.
 pub fn render(f: &mut Frame, app: &App, selected_index: usize, area: Rect) {

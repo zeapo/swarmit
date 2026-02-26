@@ -17,10 +17,7 @@ pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
 
     let lines = vec![
         Line::from(""),
-        Line::from(Span::styled(
-            "  Quit swarmit?",
-            theme.title_style(),
-        )),
+        Line::from(Span::styled("  Quit swarmit?", theme.title_style())),
         Line::from(""),
         Line::from(vec![
             Span::styled("  ", theme.normal_style()),
@@ -32,14 +29,12 @@ pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
         Line::from(""),
     ];
 
-    let para = Paragraph::new(lines)
-        .alignment(Alignment::Left)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled(" Quit? ", theme.title_style()))
-                .border_style(theme.modal_border_style()),
-        );
+    let para = Paragraph::new(lines).alignment(Alignment::Left).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(Span::styled(" Quit? ", theme.title_style()))
+            .border_style(theme.modal_border_style()),
+    );
 
     f.render_widget(para, popup);
 }

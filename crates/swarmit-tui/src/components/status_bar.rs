@@ -23,7 +23,9 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                 };
                 ("New Task".to_string(), hints)
             }
-            Modal::FilterSelect { .. } => ("Tasks".to_string(), "j/k:move  Enter:select  Esc:cancel"),
+            Modal::FilterSelect { .. } => {
+                ("Tasks".to_string(), "j/k:move  Enter:select  Esc:cancel")
+            }
             Modal::SortSelect { .. } => ("Tasks".to_string(), "j/k:move  Enter:select  Esc:cancel"),
         }
     } else {

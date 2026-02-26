@@ -128,11 +128,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                 theme.border_style()
             };
             let msg = Paragraph::new(Span::styled("No item selected.", theme.muted_style()))
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(border),
-                );
+                .block(Block::default().borders(Borders::ALL).border_style(border));
             f.render_widget(msg, area);
         }
         Some(DashboardRow::Task { id }) => render_task(f, app, area, id),

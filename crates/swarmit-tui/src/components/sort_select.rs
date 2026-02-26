@@ -6,8 +6,8 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, SORT_OPTIONS};
 use super::help::centered_rect;
+use crate::app::{App, SORT_OPTIONS};
 
 /// Renders a small centered sort selection dialog.
 pub fn render(f: &mut Frame, app: &App, selected_index: usize, area: Rect) {

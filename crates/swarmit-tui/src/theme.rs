@@ -36,7 +36,10 @@ impl Theme {
                 _ => (&PALETTE.mocha, "Catppuccin Mocha"),
             }
         };
-        Theme { colors: &flavor.colors, bat_theme }
+        Theme {
+            colors: &flavor.colors,
+            bat_theme,
+        }
     }
 
     // ── Raw color accessors ──────────────────────────────────────────────

@@ -53,7 +53,9 @@ fn render_tree(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let (widths, header) = if compact {
         (
             vec![Constraint::Length(12), Constraint::Min(8)],
-            Row::new(vec!["", "TITLE"]).style(theme.header_style()).height(1),
+            Row::new(vec!["", "TITLE"])
+                .style(theme.header_style())
+                .height(1),
         )
     } else {
         (
@@ -95,11 +97,8 @@ fn render_tree(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
                     };
 
                     if compact {
-                        Row::new(vec![
-                            Cell::from(id_cell),
-                            Cell::from(epic.title.clone()),
-                        ])
-                        .style(style)
+                        Row::new(vec![Cell::from(id_cell), Cell::from(epic.title.clone())])
+                            .style(style)
                     } else {
                         let task_count = epic.task_ids.len();
                         let status_str = epic.status.to_string();
@@ -142,11 +141,8 @@ fn render_tree(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
                     };
 
                     if compact {
-                        Row::new(vec![
-                            Cell::from(id_cell),
-                            Cell::from(task.title.clone()),
-                        ])
-                        .style(style)
+                        Row::new(vec![Cell::from(id_cell), Cell::from(task.title.clone())])
+                            .style(style)
                     } else {
                         let status_str = task.status.to_string();
                         let priority_str = task.priority.to_string();

@@ -53,10 +53,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         .map(|s| s.as_str())
         .unwrap_or("(none)");
 
-    let priority_label = PRIORITIES
-        .get(priority_index)
-        .copied()
-        .unwrap_or("Medium");
+    let priority_label = PRIORITIES.get(priority_index).copied().unwrap_or("Medium");
 
     let title_focused = *focused_field == TaskFormField::Title;
     let desc_focused = *focused_field == TaskFormField::Description;
@@ -82,7 +79,11 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         .split(inner);
 
     // ── Title label ──────────────────────────────────────────────────────────
-    let title_label_style = if title_focused { focus_style } else { normal_label_style };
+    let title_label_style = if title_focused {
+        focus_style
+    } else {
+        normal_label_style
+    };
     let title_label = Paragraph::new(Line::from(Span::styled("Title", title_label_style)));
     f.render_widget(title_label, chunks[0]);
 
@@ -109,11 +110,19 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         theme.normal_style()
     };
     let title_para = Paragraph::new(Line::from(Span::styled(title_display, title_text_style)))
-        .block(Block::default().borders(Borders::ALL).border_style(title_border_style));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(title_border_style),
+        );
     f.render_widget(title_para, chunks[1]);
 
     // ── Description label ─────────────────────────────────────────────────────
-    let desc_label_style = if desc_focused { focus_style } else { normal_label_style };
+    let desc_label_style = if desc_focused {
+        focus_style
+    } else {
+        normal_label_style
+    };
     let desc_label = Paragraph::new(Line::from(Span::styled("Description", desc_label_style)));
     f.render_widget(desc_label, chunks[3]);
 
@@ -151,7 +160,11 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let desc_para = Paragraph::new(desc_lines)
-        .block(Block::default().borders(Borders::ALL).border_style(desc_border_style))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(desc_border_style),
+        )
         .scroll((scroll_offset as u16, 0));
     f.render_widget(desc_para, chunks[4]);
 
@@ -162,9 +175,21 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         .split(chunks[6]);
 
     // Epic selector
-    let epic_label_style = if epic_focused { focus_style } else { normal_label_style };
-    let epic_value_style = if epic_focused { focus_style } else { theme.normal_style() };
-    let epic_arrows = if epic_focused { ("◄ ", " ►") } else { ("  ", "  ") };
+    let epic_label_style = if epic_focused {
+        focus_style
+    } else {
+        normal_label_style
+    };
+    let epic_value_style = if epic_focused {
+        focus_style
+    } else {
+        theme.normal_style()
+    };
+    let epic_arrows = if epic_focused {
+        ("◄ ", " ►")
+    } else {
+        ("  ", "  ")
+    };
     let epic_line = Line::from(vec![
         Span::styled("Epic: ", epic_label_style),
         Span::styled(epic_arrows.0, theme.muted_style()),
@@ -174,9 +199,21 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(epic_line), meta_chunks[0]);
 
     // Priority selector
-    let prio_label_style = if priority_focused { focus_style } else { normal_label_style };
-    let prio_value_style = if priority_focused { focus_style } else { theme.normal_style() };
-    let prio_arrows = if priority_focused { ("◄ ", " ►") } else { ("  ", "  ") };
+    let prio_label_style = if priority_focused {
+        focus_style
+    } else {
+        normal_label_style
+    };
+    let prio_value_style = if priority_focused {
+        focus_style
+    } else {
+        theme.normal_style()
+    };
+    let prio_arrows = if priority_focused {
+        ("◄ ", " ►")
+    } else {
+        ("  ", "  ")
+    };
     let prio_line = Line::from(vec![
         Span::styled("Priority: ", prio_label_style),
         Span::styled(prio_arrows.0, theme.muted_style()),
