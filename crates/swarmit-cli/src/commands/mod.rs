@@ -4,5 +4,6 @@ pub mod epic;
 pub mod init;
 pub mod link;
 pub mod log;
+pub mod project;
 pub mod sync;
 pub mod task;

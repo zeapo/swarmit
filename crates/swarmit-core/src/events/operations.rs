@@ -25,6 +25,14 @@ pub enum OperationKind {
         epic_prefix: Option<String>,
         task_prefix: Option<String>,
     },
+    UpdateProject {
+        name: Option<String>,
+        /// Some(x) = set description, None = no change (check clear_description to clear)
+        description: Option<String>,
+        /// When true, clears the description (takes precedence over `description`)
+        #[serde(default)]
+        clear_description: bool,
+    },
 
     // ── Epic ─────────────────────────────────────────────────────────────
     CreateEpic {

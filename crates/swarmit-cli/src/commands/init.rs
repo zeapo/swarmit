@@ -97,7 +97,7 @@ pub fn run(args: &InitArgs, cli: &Cli) -> Result<()> {
     Ok(())
 }
 
-fn toml_serialize(config: &ProjectConfig) -> Result<String> {
+pub fn toml_serialize(config: &ProjectConfig) -> Result<String> {
     // Use simple manual TOML since we don't want another dep for now
     let mut s = String::new();
     s.push_str(&format!("name = {:?}\n", config.name));

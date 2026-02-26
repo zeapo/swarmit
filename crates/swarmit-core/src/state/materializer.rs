@@ -61,6 +61,20 @@ impl ProjectState {
                 self.config = Some(config);
             }
 
+            OperationKind::UpdateProject { name, description, clear_description } => {
+                let config = self.config.as_mut().ok_or_else(|| {
+                    SwarmitError::NotInitialized("Cannot update project before init".into())
+                })?;
+                if let Some(n) = name {
+                    config.name = n;
+                }
+                if clear_description {
+                    config.description = None;
+                } else if let Some(d) = description {
+                    config.description = Some(d);
+                }
+            }
+
             OperationKind::CreateEpic {
                 id,
                 title,
@@ -778,5 +792,75 @@ mod tests {
 
         assert!(!state.tasks.contains_key(&task_id));
         assert!(!state.epics[&epic_id].task_ids.contains(&task_id));
+    }
+
+    // ── UpdateProject tests ───────────────────────────────────────────────
+
+    fn init_op() -> Operation {
+        op(OperationKind::InitProject {
+            name: "Original Name".to_string(),
+            description: None,
+            epic_prefix: None,
+            task_prefix: None,
+        })
+    }
+
+    #[test]
+    fn update_project_name() {
+        let mut state = ProjectState::new();
+        state.apply(init_op()).unwrap();
+        assert_eq!(state.config.as_ref().unwrap().name, "Original Name");
+
+        state
+            .apply(op(OperationKind::UpdateProject {
+                name: Some("New Name".to_string()),
+                description: None,
+                clear_description: false,
+            }))
+            .unwrap();
+
+        assert_eq!(state.config.as_ref().unwrap().name, "New Name");
+    }
+
+    #[test]
+    fn update_project_description() {
+        let mut state = ProjectState::new();
+        state.apply(init_op()).unwrap();
+        assert!(state.config.as_ref().unwrap().description.is_none());
+
+        // Set description
+        state
+            .apply(op(OperationKind::UpdateProject {
+                name: None,
+                description: Some("A description".to_string()),
+                clear_description: false,
+            }))
+            .unwrap();
+        assert_eq!(
+            state.config.as_ref().unwrap().description,
+            Some("A description".to_string())
+        );
+
+        // Clear description with clear_description: true
+        state
+            .apply(op(OperationKind::UpdateProject {
+                name: None,
+                description: None,
+                clear_description: true,
+            }))
+            .unwrap();
+        assert!(state.config.as_ref().unwrap().description.is_none());
+    }
+
+    #[test]
+    fn update_project_before_init_fails() {
+        let mut state = ProjectState::new();
+        let result = state.apply(op(OperationKind::UpdateProject {
+            name: Some("Name".to_string()),
+            description: None,
+            clear_description: false,
+        }));
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), SwarmitError::NotInitialized(_)));
     }
 }

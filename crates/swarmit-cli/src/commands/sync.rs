@@ -37,6 +37,11 @@ pub fn run(_args: &SyncArgs, cli: &Cli) -> Result<()> {
         task_count += 1;
     }
 
+    if let Some(config) = &state.config {
+        let toml = super::init::toml_serialize(config)?;
+        std::fs::write(swarmit.join("project.toml"), toml)?;
+    }
+
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
         OutputMode::Json => print_json_ok(serde_json::json!({
