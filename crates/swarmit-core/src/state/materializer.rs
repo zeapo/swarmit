@@ -158,7 +158,9 @@ impl ProjectState {
                 // Add task to epic's task list; re-open a Done epic
                 if let Some(eid) = &epic_id {
                     if let Some(epic) = self.epics.get_mut(eid) {
-                        epic.task_ids.push(id.clone());
+                        if !epic.task_ids.contains(&id) {
+                            epic.task_ids.push(id.clone());
+                        }
                         if epic.status == Status::Done {
                             epic.status = Status::InProgress;
                             epic.updated_at = op.timestamp;
@@ -861,5 +863,45 @@ mod tests {
         }));
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), SwarmitError::NotInitialized(_)));
+    }
+
+    #[test]
+    fn duplicate_create_task_does_not_add_id_twice_to_epic() {
+        // Regression test: two concurrent agents can race on task_seq and emit
+        // two CreateTask operations with the same ID. Replaying the log must not
+        // result in the task ID appearing more than once in epic.task_ids.
+        let mut state = ProjectState::new();
+        let epic_id: ItemId = "EPIC-001".parse().unwrap();
+        let task_id: ItemId = "TASK-058".parse().unwrap();
+
+        state
+            .apply(op(OperationKind::CreateEpic {
+                id: epic_id.clone(),
+                title: "Epic".to_string(),
+                description: None,
+                priority: Priority::Medium,
+            }))
+            .unwrap();
+
+        // Apply the same CreateTask operation twice (simulating a TOCTOU race).
+        for _ in 0..2 {
+            state
+                .apply(op(OperationKind::CreateTask {
+                    id: task_id.clone(),
+                    title: "Duplicate Task".to_string(),
+                    description: None,
+                    priority: Priority::Medium,
+                    epic_id: Some(epic_id.clone()),
+                }))
+                .unwrap();
+        }
+
+        let task_ids = &state.epics[&epic_id].task_ids;
+        assert_eq!(
+            task_ids.iter().filter(|id| *id == &task_id).count(),
+            1,
+            "task_ids should contain TASK-058 exactly once, got: {:?}",
+            task_ids
+        );
     }
 }
