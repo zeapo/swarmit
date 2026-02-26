@@ -9,8 +9,8 @@ use crate::theme::Theme;
 
 /// Renders a centered help overlay on top of the current screen.
 pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
-    // Center a 60×30 popup
-    let popup = centered_rect(60, 30, area);
+    // Center a 60×24 popup
+    let popup = centered_rect(60, 24, area);
 
     // Clear the area behind the popup
     f.render_widget(Clear, popup);
@@ -18,19 +18,16 @@ pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
     let keybindings: &[(&str, &str)] = &[
         ("j / ↓", "Move down"),
         ("k / ↑", "Move up"),
-        ("Enter", "Select / drill into item"),
-        ("Space", "Toggle expand/collapse epic (Dashboard)"),
-        ("h", "Collapse epic (Dashboard)"),
-        ("l", "Expand epic (Dashboard)"),
-        ("f", "Open filter dialog (Dashboard)"),
-        ("b", "Open global board (Dashboard)"),
-        ("Esc", "Go back"),
-        ("1", "Jump to Dashboard"),
-        ("2", "Jump to Activity"),
+        ("Enter", "Toggle detail pane"),
+        ("Space", "Toggle expand/collapse epic"),
+        ("h", "Collapse epic"),
+        ("l", "Expand epic"),
+        ("f", "Open filter dialog"),
+        ("s", "Open sort dialog"),
+        ("Esc", "Close detail / back / quit dialog"),
         ("n", "Create new task"),
-        ("c", "Claim selected task"),
-        ("s", "Sort dashboard / Change status"),
         ("/", "Search (coming soon)"),
+        ("r", "Refresh"),
         ("?", "Toggle this help"),
         ("q", "Quit (with confirmation)"),
     ];
@@ -45,22 +42,6 @@ pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
     ];
 
     for (key, desc) in keybindings {
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {:<14}", key), theme.help_key_style()),
-            Span::styled(format!("  {}", desc), theme.normal_style()),
-        ]));
-    }
-
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "  ── Global Board ──",
-        theme.muted_style(),
-    )));
-    let global_board_keys: &[(&str, &str)] = &[
-        ("h / l", "Switch column"),
-        ("j / k", "Move up/down within column"),
-    ];
-    for (key, desc) in global_board_keys {
         lines.push(Line::from(vec![
             Span::styled(format!("  {:<14}", key), theme.help_key_style()),
             Span::styled(format!("  {}", desc), theme.normal_style()),

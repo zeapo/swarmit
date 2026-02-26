@@ -1,13 +1,7 @@
-use swarmit_core::models::ItemId;
-
 /// Which screen is currently displayed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Screen {
-    Dashboard,
-    Board { epic_id: ItemId },
-    GlobalBoard,
-    TaskDetail { task_id: ItemId },
-    Activity,
+    Main,
     Help,
 }
 
@@ -16,20 +10,13 @@ pub enum Screen {
 pub enum Action {
     Up,
     Down,
-    Select,
+    ToggleDetailPane,
     Back,
     Quit,
     QuitRequest,
     NewTask,
     Help,
     Search,
-    ClaimTask,
-    ChangeStatus,
-    GotoDashboard,
-    GotoActivity,
-    GotoGlobalBoard,
-    ColLeft,
-    ColRight,
     Refresh,
     ToggleCollapse,
     CollapseEpic,
