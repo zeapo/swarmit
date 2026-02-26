@@ -195,6 +195,9 @@ pub struct App {
     /// Vertical scroll offset for the detail pane.
     pub detail_scroll: usize,
 
+    /// Width percentage for the detail pane (20-80).
+    pub detail_width_percent: u16,
+
     /// Cache for the syntax-highlighted description of the currently selected task.
     /// Tuple: (task_id, description_content, rendered_text).
     /// Avoids re-running bat highlighting on every frame (~10 FPS).
@@ -277,6 +280,7 @@ impl App {
             detail_open: false,
             focus: Focus::default(),
             detail_scroll: 0,
+            detail_width_percent: 50,
             highlight_cache: None,
             highlight_tx: hl_work_tx,
             highlight_rx: hl_result_rx,
@@ -373,16 +377,20 @@ impl App {
                         self.collapsed_epics.remove(&eid);
                     }
                     self.rebuild_dashboard_rows();
-                    // After collapsing, move selection to the epic itself
-                    // so focus doesn't land on the next epic below.
                     if collapsing {
-                        if let Some(pos) = self.dashboard_rows.iter().position(|r| {
-                            matches!(r, DashboardRow::Epic { id } if id == &eid)
-                        }) {
+                        if let Some(pos) = self
+                            .dashboard_rows
+                            .iter()
+                            .position(|r| matches!(r, DashboardRow::Epic { id } if id == &eid))
+                        {
                             self.selected_index = pos;
                         }
                     }
                 }
+            }
+            Action::ResizeDetail(delta) => {
+                let new_width = self.detail_width_percent as i16 + delta as i16;
+                self.detail_width_percent = new_width.clamp(20, 80) as u16;
             }
             action => self.apply_action(action),
         }
@@ -490,13 +498,23 @@ impl App {
 
     fn handle_task_form_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
         // When awaiting discard confirmation, intercept all keys before normal dispatch.
-        if matches!(&self.modal, Some(Modal::TaskCreate { confirm_discard: true, .. })) {
+        if matches!(
+            &self.modal,
+            Some(Modal::TaskCreate {
+                confirm_discard: true,
+                ..
+            })
+        ) {
             match code {
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Esc => {
                     self.modal = None;
                 }
                 KeyCode::Char('n') | KeyCode::Char('N') => {
-                    if let Some(Modal::TaskCreate { ref mut confirm_discard, .. }) = self.modal {
+                    if let Some(Modal::TaskCreate {
+                        ref mut confirm_discard,
+                        ..
+                    }) = self.modal
+                    {
                         *confirm_discard = false;
                     }
                 }
@@ -561,8 +579,8 @@ impl App {
                     return;
                 }
                 KeyCode::Esc => {
-                    let has_content = !title.trim().is_empty()
-                        || description.iter().any(|l| !l.is_empty());
+                    let has_content =
+                        !title.trim().is_empty() || description.iter().any(|l| !l.is_empty());
                     if has_content {
                         *confirm_discard = true;
                     } else {
@@ -654,8 +672,8 @@ impl App {
                     return;
                 }
                 KeyCode::Esc => {
-                    let has_content = !title.trim().is_empty()
-                        || description.iter().any(|l| !l.is_empty());
+                    let has_content =
+                        !title.trim().is_empty() || description.iter().any(|l| !l.is_empty());
                     if has_content {
                         *confirm_discard = true;
                     } else {
@@ -691,8 +709,8 @@ impl App {
                     return;
                 }
                 KeyCode::Esc => {
-                    let has_content = !title.trim().is_empty()
-                        || description.iter().any(|l| !l.is_empty());
+                    let has_content =
+                        !title.trim().is_empty() || description.iter().any(|l| !l.is_empty());
                     if has_content {
                         *confirm_discard = true;
                     } else {
@@ -728,8 +746,8 @@ impl App {
                     return;
                 }
                 KeyCode::Esc => {
-                    let has_content = !title.trim().is_empty()
-                        || description.iter().any(|l| !l.is_empty());
+                    let has_content =
+                        !title.trim().is_empty() || description.iter().any(|l| !l.is_empty());
                     if has_content {
                         *confirm_discard = true;
                     } else {
@@ -750,7 +768,12 @@ impl App {
                 epic_index,
                 priority_index,
                 ..
-            }) => (title.clone(), description.clone(), *epic_index, *priority_index),
+            }) => (
+                title.clone(),
+                description.clone(),
+                *epic_index,
+                *priority_index,
+            ),
             _ => return,
         };
 
@@ -796,7 +819,11 @@ impl App {
         };
 
         let desc = description.join("\n");
-        let desc_opt = if desc.trim().is_empty() { None } else { Some(desc) };
+        let desc_opt = if desc.trim().is_empty() {
+            None
+        } else {
+            Some(desc)
+        };
 
         let op = Operation::new(
             agent,
@@ -859,9 +886,7 @@ impl App {
         let mut top: Vec<TopLevel> = Vec::new();
 
         for task in self.state.tasks.values() {
-            if task.epic_id.is_none()
-                && self.dashboard_filter.map_or(true, |f| task.status == f)
-            {
+            if task.epic_id.is_none() && self.dashboard_filter.map_or(true, |f| task.status == f) {
                 top.push(TopLevel::Task(task.id.clone()));
             }
         }
@@ -905,13 +930,20 @@ impl App {
                 }
                 TopLevel::Epic(epic_id) => {
                     let task_ids: Vec<ItemId> = self.state.epics[&epic_id].task_ids.clone();
-                    rows.push(DashboardRow::Epic { id: epic_id.clone() });
+                    rows.push(DashboardRow::Epic {
+                        id: epic_id.clone(),
+                    });
 
                     if !self.collapsed_epics.contains(&epic_id) {
                         for task_id in task_ids {
                             // Apply status filter to epic tasks.
                             if let Some(filter) = &self.dashboard_filter {
-                                if self.state.tasks.get(&task_id).map_or(false, |t| t.status != *filter) {
+                                if self
+                                    .state
+                                    .tasks
+                                    .get(&task_id)
+                                    .map_or(false, |t| t.status != *filter)
+                                {
                                     continue;
                                 }
                             }
@@ -937,11 +969,7 @@ impl App {
         let row = self.dashboard_rows.get(self.selected_index)?;
         match row {
             DashboardRow::Epic { id } => Some(id.clone()),
-            DashboardRow::Task { id } => self
-                .state
-                .tasks
-                .get(id)
-                .and_then(|t| t.epic_id.clone()),
+            DashboardRow::Task { id } => self.state.tasks.get(id).and_then(|t| t.epic_id.clone()),
         }
     }
 
@@ -967,9 +995,7 @@ impl App {
         }
 
         // Read new operations from the last known byte offset.
-        if let Ok((new_ops, new_offset)) =
-            read_operations_since(&self.log_path, self.log_offset)
-        {
+        if let Ok((new_ops, new_offset)) = read_operations_since(&self.log_path, self.log_offset) {
             if !new_ops.is_empty() {
                 for op in new_ops {
                     let _ = self.state.apply(op);
@@ -991,9 +1017,7 @@ impl App {
         // 1. Drain completed highlights from background thread.
         while let Ok(result) = self.highlight_rx.try_recv() {
             if let Some((ref id, ref desc, _)) = self.highlight_cache {
-                if *id == result.task_id
-                    && desc.as_deref() == Some(result.description.as_str())
-                {
+                if *id == result.task_id && desc.as_deref() == Some(result.description.as_str()) {
                     self.highlight_cache =
                         Some((result.task_id, Some(result.description), result.text));
                 }
@@ -1001,7 +1025,10 @@ impl App {
         }
 
         // 2. Determine what should be cached.
-        let task_id = match (self.detail_open, self.dashboard_rows.get(self.selected_index)) {
+        let task_id = match (
+            self.detail_open,
+            self.dashboard_rows.get(self.selected_index),
+        ) {
             (true, Some(DashboardRow::Task { id })) => id.clone(),
             _ => {
                 self.highlight_cache = None;
@@ -1399,7 +1426,11 @@ mod tests {
 
         app.handle_action(Action::Back);
         assert!(!app.detail_open);
-        assert_eq!(app.focus, Focus::List, "invariant: focus==List when detail closed");
+        assert_eq!(
+            app.focus,
+            Focus::List,
+            "invariant: focus==List when detail closed"
+        );
     }
 
     #[test]
@@ -1480,7 +1511,13 @@ mod tests {
         let task_rows: Vec<&ItemId> = app.dashboard_rows[epic_pos + 1..]
             .iter()
             .take_while(|r| matches!(r, DashboardRow::Task { .. }))
-            .filter_map(|r| if let DashboardRow::Task { id } = r { Some(id) } else { None })
+            .filter_map(|r| {
+                if let DashboardRow::Task { id } = r {
+                    Some(id)
+                } else {
+                    None
+                }
+            })
             .collect();
 
         assert_eq!(task_rows.len(), 2);
@@ -1493,8 +1530,7 @@ mod tests {
         let mut anim = CrabAnimation::new(80, 24);
         assert!(!anim.is_expired(), "should not be expired immediately");
         // Backdate the start time to simulate 4 seconds having passed.
-        anim.start_time =
-            std::time::Instant::now() - std::time::Duration::from_secs(4);
+        anim.start_time = std::time::Instant::now() - std::time::Duration::from_secs(4);
         assert!(anim.is_expired(), "should be expired after 4 seconds");
     }
 
@@ -1510,5 +1546,39 @@ mod tests {
         let new_x = anim.rows[0].crabs[0].x;
         // x should have changed (moved forward or wrapped).
         assert_ne!(new_x, initial_x, "crab should have moved after update");
+    }
+
+    #[test]
+    fn resize_detail_adjusts_width() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+
+        assert_eq!(app.detail_width_percent, 50, "default is 50%");
+
+        app.handle_action(Action::ResizeDetail(5));
+        assert_eq!(app.detail_width_percent, 55);
+
+        app.handle_action(Action::ResizeDetail(-10));
+        assert_eq!(app.detail_width_percent, 45);
+    }
+
+    #[test]
+    fn resize_detail_clamps_to_20_80_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+
+        app.detail_width_percent = 78;
+        app.handle_action(Action::ResizeDetail(5));
+        assert_eq!(app.detail_width_percent, 80, "should clamp at 80%");
+
+        app.handle_action(Action::ResizeDetail(5));
+        assert_eq!(app.detail_width_percent, 80, "should stay at 80%");
+
+        app.detail_width_percent = 23;
+        app.handle_action(Action::ResizeDetail(-5));
+        assert_eq!(app.detail_width_percent, 20, "should clamp at 20%");
+
+        app.handle_action(Action::ResizeDetail(-5));
+        assert_eq!(app.detail_width_percent, 20, "should stay at 20%");
     }
 }

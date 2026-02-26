@@ -9,10 +9,8 @@ use crate::theme::Theme;
 
 /// Renders a centered help overlay on top of the current screen.
 pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
-    // Center a 60×26 popup (one extra keybinding row)
-    let popup = centered_rect(60, 26, area);
+    let popup = centered_rect(60, 28, area);
 
-    // Clear the area behind the popup
     f.render_widget(Clear, popup);
 
     let keybindings: &[(&str, &str)] = &[
@@ -22,6 +20,8 @@ pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
         ("h", "Return focus to list (panel stays open)"),
         ("Esc", "Close detail pane / back / quit dialog"),
         ("Space", "Toggle expand/collapse epic"),
+        ("<", "Shrink detail pane"),
+        (">", "Expand detail pane"),
         ("f", "Open filter dialog"),
         ("s", "Open sort dialog"),
         ("n", "Create new task"),
@@ -53,14 +53,12 @@ pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
         theme.muted_style(),
     )));
 
-    let para = Paragraph::new(lines)
-        .alignment(Alignment::Left)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled(" Help ", theme.title_style()))
-                .border_style(theme.modal_border_style()),
-        );
+    let para = Paragraph::new(lines).alignment(Alignment::Left).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(Span::styled(" Help ", theme.title_style()))
+            .border_style(theme.modal_border_style()),
+    );
 
     f.render_widget(para, popup);
 }

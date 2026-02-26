@@ -85,6 +85,7 @@ pub enum Action {
     SortDialogMove(i8),
     SortDialogConfirm,
     SortDialogCancel,
+    ResizeDetail(i8),
     None,
 }
 
@@ -152,9 +153,16 @@ mod tests {
         assert_eq!(tracker.progress, 0);
         // Can still complete the full sequence from scratch
         let sequence = [
-            KeyCode::Up, KeyCode::Up, KeyCode::Down, KeyCode::Down,
-            KeyCode::Left, KeyCode::Right, KeyCode::Left, KeyCode::Right,
-            KeyCode::Char('b'), KeyCode::Char('a'),
+            KeyCode::Up,
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Down,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Char('b'),
+            KeyCode::Char('a'),
         ];
         for (i, &key) in sequence.iter().enumerate() {
             let done = tracker.feed(key);
@@ -182,6 +190,10 @@ pub enum Modal {
         /// True when Esc was pressed on a non-empty form — awaiting y/n confirmation.
         confirm_discard: bool,
     },
-    FilterSelect { selected_index: usize },
-    SortSelect { selected_index: usize },
+    FilterSelect {
+        selected_index: usize,
+    },
+    SortSelect {
+        selected_index: usize,
+    },
 }

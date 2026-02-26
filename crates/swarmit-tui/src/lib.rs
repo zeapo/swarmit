@@ -53,9 +53,7 @@ pub fn run(project_root: &Path) -> Result<()> {
         let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
             .file(&trace_path)
             .build();
-        tracing_subscriber::registry()
-            .with(chrome_layer)
-            .init();
+        tracing_subscriber::registry().with(chrome_layer).init();
         guard
     };
 
@@ -100,10 +98,7 @@ fn restore_terminal() -> Result<()> {
     Ok(())
 }
 
-fn run_loop(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &mut App,
-) -> Result<()> {
+fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     let mut last_frame = Instant::now();
 
     loop {
@@ -139,18 +134,17 @@ fn run_loop(
                 match &app.screen {
                     Screen::Main => {
                         if app.detail_open {
+                            let left_pct = 100 - app.detail_width_percent;
                             let split = Layout::horizontal([
-                                Constraint::Length(30),
-                                Constraint::Min(40),
+                                Constraint::Percentage(left_pct),
+                                Constraint::Percentage(app.detail_width_percent),
                             ])
                             .split(main_area);
                             components::tree_list::render(f, app, split[0]);
                             // Right side: 1-row breadcrumb + detail pane content
-                            let right = Layout::vertical([
-                                Constraint::Length(1),
-                                Constraint::Min(0),
-                            ])
-                            .split(split[1]);
+                            let right =
+                                Layout::vertical([Constraint::Length(1), Constraint::Min(0)])
+                                    .split(split[1]);
                             components::detail_pane::render_breadcrumb(f, app, right[0]);
                             components::detail_pane::render(f, app, right[1]);
                         } else {
@@ -174,12 +168,7 @@ fn run_loop(
                             components::task_create::render(f, app, main_area)
                         }
                         Modal::FilterSelect { selected_index } => {
-                            components::filter_select::render(
-                                f,
-                                app,
-                                *selected_index,
-                                main_area,
-                            )
+                            components::filter_select::render(f, app, *selected_index, main_area)
                         }
                         Modal::SortSelect { selected_index } => {
                             components::sort_select::render(f, app, *selected_index, main_area)
@@ -207,8 +196,7 @@ fn run_loop(
         if has_event {
             if let Event::Key(key) = event::read()? {
                 // Ctrl+C always quits immediately (no dialog)
-                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)
-                {
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     return Ok(());
                 }
                 {
@@ -237,7 +225,11 @@ fn run_loop(
 
         // Advance and auto-expire the crab animation.
         app.update_crab_animation(dt);
-        if app.crab_animation.as_ref().map_or(false, |a| a.is_expired()) {
+        if app
+            .crab_animation
+            .as_ref()
+            .map_or(false, |a| a.is_expired())
+        {
             app.crab_animation = None;
         }
 
@@ -264,6 +256,8 @@ fn key_to_action(code: KeyCode, _modifiers: KeyModifiers) -> Action {
         KeyCode::Char('?') => Action::Help,
         KeyCode::Char('/') => Action::Search,
         KeyCode::Char('r') => Action::Refresh,
+        KeyCode::Char('<') => Action::ResizeDetail(-5),
+        KeyCode::Char('>') => Action::ResizeDetail(5),
         _ => Action::None,
     }
 }
