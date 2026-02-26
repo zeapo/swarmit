@@ -1,38 +1,32 @@
 # Swarmit
 
-**Local-first project management for multi-agent workflows.**
+**Task coordination for multi-agent Claude Code workflows.**
 
-Swarmit lets multiple AI agents collaborate on the same project without stepping on each other. Tasks and epics live in an append-only event log — every agent reads the same state, every write is lock-protected, and the built-in TUI gives you a live view of what's happening.
-
----
-
-## What it does
-
-- **Append-only event log** — all mutations are JSONL operations written to `.swarmit/operations.log`. State is rebuilt by replaying the log, so nothing is ever silently lost.
-- **Concurrent agents** — file-based locking (`fd-lock`) means multiple agents can write safely at the same time.
-- **CLI** — create tasks, claim work, mark done, add comments, link items, inspect history.
-- **TUI** — a live terminal dashboard that refreshes automatically when agents change state.
-- **Claude Code plugin** — teaches agents to use swarmit instead of built-in todos, so task state is always in the log and visible to everyone.
+When you run several Claude Code agents in parallel, they each have their own built-in todo list — invisible to every other agent and gone when the session ends. Swarmit replaces that with a shared task board every agent reads and writes through the same CLI. One source of truth. Live terminal dashboard. No duplicated work.
 
 ---
 
-## Features
+## How it works
 
-- Event sourcing with `fsync`-safe writes
-- Per-write exclusive locking with 5 s timeout / 10 ms retry
-- Epics and tasks with priorities, assignees, and statuses
-- Typed relationships: `blocks`, `blocked_by`, `parent`, `child`, `relates_to`, `duplicates`
-- Comments on any task
-- `swarmit compact` to rotate and snapshot the log
-- TUI with live refresh, keyboard navigation, sort/filter dialogs
-- Catppuccin theme (auto light/dark detection, `SWARMIT_THEME` override)
-- JSON output mode for scripting and agent use
+```
+  Agent A          Agent B          Agent C
+    │                 │                │
+    │  swarmit CLI    │  swarmit CLI   │  swarmit CLI
+    └────────┬────────┘                │
+             ▼                         │
+       shared task state  ◄────────────┘
+             │
+             ▼
+         swarmit TUI
+    (live-refreshing dashboard
+     you watch while agents run)
+```
+
+Agents create tasks, claim them before starting, leave comments as they work, and mark them done — all through the CLI. The TUI reflects the current state in real time.
 
 ---
 
-## Installation
-
-Swarmit is built from source with Cargo:
+## Install
 
 ```bash
 git clone https://github.com/zeapo/swarmit
@@ -40,82 +34,107 @@ cd swarmit
 cargo install --path crates/swarmit
 ```
 
-Requires Rust 1.80 or newer. Pre-built binaries are not yet published.
+Requires Rust 1.80+.
 
 ---
 
-## Quick Start
+## Quick start
 
 ```bash
-# Initialize a project in the current directory
+# Initialize a project
 swarmit init --name "My Project" --agent me
 
-# Create an epic
+# Create an epic and a task
 swarmit epic create --title "Authentication" --agent me
-
-# Create a task inside the epic
 swarmit task create --title "Implement login flow" --epic EPIC-001 --agent me
 
-# Claim it (marks as In Progress)
-swarmit task claim TASK-001 --agent me
-
-# Mark it done
-swarmit task done TASK-001 --agent me
+# Agents claim before starting, done when finished
+swarmit task claim TASK-001 --agent claude-1
+swarmit task done  TASK-001 --agent claude-1
 ```
+
+All mutation commands require `--agent <ID>` (or `SWARMIT_AGENT` env var). Output is pretty-printed on a TTY and JSON when piped — useful for scripting and for agent-to-agent communication.
+
+Or just let Claude Code do it for you ;)
 
 ---
 
-## CLI Usage
+## Claude Code plugin
 
-All mutation commands require `--agent <ID>` (or `SWARMIT_AGENT` env var). Output is pretty-printed on a TTY and JSON when piped.
+The plugin teaches Claude Code agents to use swarmit instead of the built-in todo tools. Once installed, agents automatically:
+
+- Create tasks with `swarmit task create` (visible to all other agents)
+- Claim tasks before starting (prevents duplicate work)
+- Leave progress comments visible in the TUI in real time
+- Mark tasks done when finished
+
+**Install:**
+
+```
+/plugin marketplace add zeapo/swarmit
+/plugin install swarmit
+```
+
+Or copy the skill file manually into your `.claude/skills/` directory — see [`plugin/skills/swarmit/`](plugin/skills/swarmit/).
+
+---
+
+## CLI
 
 ### Command groups
 
-| Group | Description |
-|-------|-------------|
-| `swarmit init` | Initialize a new project |
+| Command | Description |
+|---------|-------------|
+| `swarmit init` | Initialize a project in the current directory |
 | `swarmit epic` | Create, list, show, update, delete epics |
 | `swarmit task` | Create, list, show, update, claim, done, delete tasks |
-| `swarmit link` | Add / remove / list typed relationships between items |
-| `swarmit comment` | Add comments to tasks |
-| `swarmit log` | Inspect the raw operation log |
-| `swarmit compact` | Snapshot and rotate the log |
+| `swarmit link` | Add / remove / list typed relationships |
+| `swarmit comment` | Add comments to any task |
+| `swarmit log` | Inspect the history of all changes |
+| `swarmit compact` | Prune and snapshot history |
 
-### Examples
+### Common examples
 
 ```bash
 # List all open tasks
 swarmit task list --status todo
 
-# Show full task detail (relationships + comments)
+# Show task detail with relationships and comments
 swarmit task show TASK-007
 
-# Link two tasks
+# Link tasks
 swarmit link add --from TASK-001 --to TASK-002 --type blocks --agent me
 
 # Add a progress comment
 swarmit comment add TASK-001 --body "OAuth flow implemented, tests passing" --agent me
 
-# Tail the operation log
+# Review recent activity
 swarmit log --tail 20
 
 # JSON output for scripting
 swarmit task list --status todo --json
 ```
 
-See [`plugin/skills/swarmit/cli-reference.md`](plugin/skills/swarmit/cli-reference.md) for the full command reference.
+Full reference: [`plugin/skills/swarmit/cli-reference.md`](plugin/skills/swarmit/cli-reference.md)
 
 ---
 
 ## TUI
 
-Run `swarmit` with no arguments in a TTY to open the terminal dashboard:
+Run `swarmit` with no arguments in a TTY to open the live dashboard:
 
 ```bash
 swarmit
 ```
 
-The TUI polls for file changes and refreshes automatically when agents update state.
+The TUI polls for file changes and refreshes automatically as agents update state. Catppuccin theme with auto light/dark detection.
+
+```bash
+SWARMIT_THEME=latte     swarmit   # light
+SWARMIT_THEME=mocha     swarmit   # dark
+SWARMIT_THEME=frappe    swarmit
+SWARMIT_THEME=macchiato swarmit
+```
 
 ### Key bindings
 
@@ -129,51 +148,33 @@ The TUI polls for file changes and refreshes automatically when agents update st
 | `d` | Mark selected task done |
 | `f` | Filter dialog |
 | `s` | Sort dialog |
+| `←` / `→` | Resize detail panel |
 | `?` | Help |
 | `q` / `Esc` | Quit / back |
 
-### Theme
+---
 
-Swarmit uses Catppuccin and auto-detects light vs dark terminal background. Override with:
+## What's in the box
 
-```bash
-SWARMIT_THEME=latte swarmit        # light
-SWARMIT_THEME=mocha swarmit        # dark
-SWARMIT_THEME=frappe swarmit
-SWARMIT_THEME=macchiato swarmit
-```
+- Epics and tasks with priority, assignee, and status
+- Typed relationships between items (`blocks`, `blocked_by`, `parent`, `child`, `relates_to`, `duplicates`)
+- Comments on any task
+- Full history with `swarmit log`
+- JSON output on every command — pipe-friendly for agents and scripts
+- TUI with sort, filter, live refresh, and resizable panels
+- Catppuccin theme with auto dark/light detection
+- Claude Code skill file that wires everything together
 
 ---
 
-## Claude Code Plugin
-
-The swarmit plugin teaches Claude Code agents to use `swarmit` instead of the built-in todo tools, so task state persists to the event log and is visible to all agents and the TUI.
-
-### Install
-
-```
-/plugin marketplace add zeapo/swarmit
-/plugin install swarmit
-```
-
-### What it does
-
-Once installed, agents will:
-- Create tasks with `swarmit task create` instead of `TodoWrite`
-- Claim tasks before starting work
-- Mark tasks done with `swarmit task done`
-- Add progress comments visible to all other agents in real time
-
----
-
-## Project Structure
+## Project layout
 
 ```
 crates/
   swarmit-core/   # Models, event sourcing, state materializer
   swarmit-cli/    # CLI commands (clap)
   swarmit-tui/    # Terminal UI (ratatui + crossterm)
-  swarmit/        # Binary entry point (mode detection)
+  swarmit/        # Binary entry point + mode detection
 plugin/
   skills/
     swarmit/      # Claude Code skill files
@@ -190,9 +191,3 @@ cargo run -- --help  # CLI help
 ```
 
 Tests use `tempfile` for isolated directories — no global state.
-
----
-
-## License
-
-MIT
