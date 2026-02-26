@@ -3,3 +3,4 @@ Cargo.lock
 *.swarmit/
 .DS_Store
 .worktrees/
+.claude/worktrees/
