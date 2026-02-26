@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
 use crate::events::log::read_operations;
 use crate::events::operations::{Operation, OperationKind};
 use crate::models::{
@@ -9,7 +11,7 @@ use crate::models::{
 };
 
 /// Full in-memory projection of all project state.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct ProjectState {
     pub config: Option<ProjectConfig>,
     pub epics: BTreeMap<ItemId, Epic>,
