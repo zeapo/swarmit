@@ -12,7 +12,7 @@ use swarmit_core::events::operations::{Operation, OperationKind};
 use swarmit_core::models::{AgentId, ItemId, Priority, Status};
 use swarmit_core::state::ProjectState;
 
-use crate::components::dashboard::DashboardRow;
+use crate::components::tree_list::DashboardRow;
 use crate::events::{Action, Modal, Screen, TaskFormField};
 use crate::theme::Theme;
 
@@ -58,11 +58,8 @@ pub struct App {
     pub project_root: PathBuf,
     pub theme: Theme,
 
-    // Navigation: index of selected item in the current list.
+    // Navigation: index of selected item in the tree list.
     pub selected_index: usize,
-
-    // Navigation: index of selected column in GlobalBoard.
-    pub selected_column: usize,
 
     // File watcher for live refresh.
     watcher_rx: Option<Receiver<DebounceEventResult>>,
@@ -84,20 +81,20 @@ pub struct App {
     // Active modal overlay (None = no modal).
     pub modal: Option<Modal>,
 
-    // Epics that are currently collapsed in the dashboard tree.
+    // Epics that are currently collapsed in the tree.
     pub collapsed_epics: HashSet<ItemId>,
 
-    /// Status filter for the dashboard (None = show all).
+    /// Status filter for the tree (None = show all).
     pub dashboard_filter: Option<Status>,
 
-    /// Sort order for the dashboard.
+    /// Sort order for the tree.
     pub dashboard_sort: SortOption,
 
-    // Cached flattened tree rows for the dashboard (rebuilt on state changes).
+    // Cached flattened tree rows (rebuilt on state changes).
     pub dashboard_rows: Vec<DashboardRow>,
 
-    /// Navigation history stack — used by `go_back()` to return to the previous screen.
-    pub screen_history: Vec<Screen>,
+    /// Whether the bottom detail pane is currently visible.
+    pub detail_open: bool,
 }
 
 impl App {
@@ -125,11 +122,10 @@ impl App {
 
         let mut app = App {
             state,
-            screen: Screen::Dashboard,
+            screen: Screen::Main,
             project_root,
             theme,
             selected_index: 0,
-            selected_column: 0,
             watcher_rx: Some(rx),
             _debouncer: Some(debouncer),
             log_offset,
@@ -143,7 +139,7 @@ impl App {
             dashboard_filter: None,
             dashboard_sort: SortOption::default(),
             dashboard_rows: Vec::new(),
-            screen_history: Vec::new(),
+            detail_open: false,
         };
         app.rebuild_dashboard_rows();
         Ok(app)
@@ -169,83 +165,51 @@ impl App {
                     error: None,
                 });
             }
-            Action::Back => self.go_back(),
+            Action::Back => {
+                if self.detail_open {
+                    self.detail_open = false;
+                } else if matches!(self.screen, Screen::Help) {
+                    self.screen = Screen::Main;
+                } else {
+                    self.modal = Some(Modal::QuitConfirm);
+                }
+            }
             Action::Up => self.move_up(),
             Action::Down => self.move_down(),
-            Action::Select => self.select_item(),
-            Action::GotoDashboard => {
-                self.selected_column = 0;
-                self.navigate_to(Screen::Dashboard);
-                self.rebuild_dashboard_rows();
-            }
-            Action::GotoActivity => {
-                self.selected_column = 0;
-                self.navigate_to(Screen::Activity);
-            }
-            Action::GotoGlobalBoard => {
-                self.screen = Screen::GlobalBoard;
-                self.selected_index = 0;
-                self.selected_column = 0;
-            }
-            Action::ColLeft => {
-                self.selected_column = self.selected_column.saturating_sub(1);
-                let count = self.tasks_in_column(self.selected_column);
-                if count == 0 {
-                    self.selected_index = 0;
-                } else {
-                    self.selected_index = self.selected_index.min(count - 1);
-                }
-            }
-            Action::ColRight => {
-                if self.selected_column < 3 {
-                    self.selected_column += 1;
-                }
-                let count = self.tasks_in_column(self.selected_column);
-                if count == 0 {
-                    self.selected_index = 0;
-                } else {
-                    self.selected_index = self.selected_index.min(count - 1);
-                }
-            }
+            Action::ToggleDetailPane => self.toggle_detail_pane(),
             Action::Help => {
-                self.navigate_to(Screen::Help);
+                self.screen = Screen::Help;
             }
             Action::Refresh => {
                 self.poll_log_changes();
             }
             Action::ToggleCollapse => {
-                if matches!(self.screen, Screen::Dashboard) {
-                    if let Some(eid) = self.epic_id_at_selection() {
-                        if self.collapsed_epics.contains(&eid) {
-                            self.collapsed_epics.remove(&eid);
-                        } else {
-                            self.collapsed_epics.insert(eid);
-                        }
-                        self.rebuild_dashboard_rows();
+                if let Some(eid) = self.epic_id_at_selection() {
+                    if self.collapsed_epics.contains(&eid) {
+                        self.collapsed_epics.remove(&eid);
+                    } else {
+                        self.collapsed_epics.insert(eid);
                     }
+                    self.rebuild_dashboard_rows();
                 }
             }
             Action::CollapseEpic => {
-                if matches!(self.screen, Screen::Dashboard) {
-                    if let Some(eid) = self.epic_id_at_selection() {
-                        self.collapsed_epics.insert(eid);
-                        self.rebuild_dashboard_rows();
-                    }
+                if let Some(eid) = self.epic_id_at_selection() {
+                    self.collapsed_epics.insert(eid);
+                    self.rebuild_dashboard_rows();
                 }
             }
             Action::ExpandEpic => {
-                if matches!(self.screen, Screen::Dashboard) {
-                    if let Some(eid) = self.epic_id_at_selection() {
-                        self.collapsed_epics.remove(&eid);
-                        self.rebuild_dashboard_rows();
-                    }
+                if let Some(eid) = self.epic_id_at_selection() {
+                    self.collapsed_epics.remove(&eid);
+                    self.rebuild_dashboard_rows();
                 }
             }
             action => self.apply_action(action),
         }
     }
 
-    /// Apply filter-dialog actions (also called from `handle_filter_select_key`).
+    /// Apply filter-dialog and sort-dialog actions.
     fn apply_action(&mut self, action: Action) {
         match action {
             Action::OpenFilterDialog => {
@@ -658,21 +622,9 @@ impl App {
         }
     }
 
-    /// Push the current screen onto the history stack and navigate to `screen`.
-    fn navigate_to(&mut self, screen: Screen) {
-        self.screen_history.push(self.screen.clone());
-        self.screen = screen;
-        self.selected_index = 0;
-        self.selected_column = 0;
-    }
-
-    fn go_back(&mut self) {
-        self.screen = self.screen_history.pop().unwrap_or(Screen::Dashboard);
-        self.selected_index = 0;
-        self.selected_column = 0;
-        if self.screen == Screen::Dashboard {
-            self.rebuild_dashboard_rows();
-        }
+    /// Toggle the detail pane open/closed.
+    fn toggle_detail_pane(&mut self) {
+        self.detail_open = !self.detail_open;
     }
 
     /// Rebuild the flat `dashboard_rows` cache from current state.
@@ -697,6 +649,7 @@ impl App {
                 top.push(TopLevel::Task(task.id.clone()));
             }
         }
+
         for epic_id in self.state.epics.keys() {
             top.push(TopLevel::Epic(epic_id.clone()));
         }
@@ -762,8 +715,8 @@ impl App {
         }
     }
 
-    /// Returns the epic id associated with the currently selected dashboard row,
-    /// or `None` if the selection is outside the dashboard or on an orphan task.
+    /// Returns the epic id associated with the currently selected row,
+    /// or `None` if the selection is on an orphan task or the list is empty.
     fn epic_id_at_selection(&self) -> Option<ItemId> {
         let row = self.dashboard_rows.get(self.selected_index)?;
         match row {
@@ -781,85 +734,10 @@ impl App {
     }
 
     fn move_down(&mut self) {
-        let max = self.current_list_len().saturating_sub(1);
+        let max = self.dashboard_rows.len().saturating_sub(1);
         if self.selected_index < max {
             self.selected_index += 1;
         }
-    }
-
-    fn select_item(&mut self) {
-        match self.screen.clone() {
-            Screen::Dashboard => {
-                match self.dashboard_rows.get(self.selected_index).cloned() {
-                    Some(DashboardRow::Epic { id }) => {
-                        self.navigate_to(Screen::Board { epic_id: id });
-                    }
-                    Some(DashboardRow::Task { id }) => {
-                        self.navigate_to(Screen::TaskDetail { task_id: id });
-                    }
-                    None => {}
-                }
-            }
-            Screen::Board { epic_id } => {
-                // Select a task to view details
-                let tasks: Vec<_> = self
-                    .state
-                    .tasks
-                    .values()
-                    .filter(|t| t.epic_id.as_ref() == Some(&epic_id))
-                    .map(|t| t.id.clone())
-                    .collect();
-                if let Some(task_id) = tasks.get(self.selected_index) {
-                    self.navigate_to(Screen::TaskDetail {
-                        task_id: task_id.clone(),
-                    });
-                }
-            }
-            Screen::GlobalBoard => {
-                const STATUSES: [Status; 4] =
-                    [Status::Todo, Status::InProgress, Status::Done, Status::Blocked];
-                let col_status = STATUSES[self.selected_column];
-                let tasks: Vec<_> = self
-                    .state
-                    .tasks
-                    .values()
-                    .filter(|t| t.status == col_status)
-                    .map(|t| t.id.clone())
-                    .collect();
-                if let Some(task_id) = tasks.get(self.selected_index) {
-                    self.navigate_to(Screen::TaskDetail {
-                        task_id: task_id.clone(),
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn current_list_len(&self) -> usize {
-        match &self.screen {
-            Screen::Dashboard => self.dashboard_rows.len(),
-            Screen::Board { epic_id } => self
-                .state
-                .tasks
-                .values()
-                .filter(|t| t.epic_id.as_ref() == Some(epic_id))
-                .count(),
-            Screen::Activity => {
-                // Show up to 200 recent operations — list length for scrolling
-                200
-            }
-            Screen::GlobalBoard => self.tasks_in_column(self.selected_column),
-            _ => 0,
-        }
-    }
-
-    /// Returns the number of tasks with the status corresponding to `col`.
-    /// Column indices: 0=Todo, 1=InProgress, 2=Done, 3=Blocked.
-    pub fn tasks_in_column(&self, col: usize) -> usize {
-        const STATUSES: [Status; 4] =
-            [Status::Todo, Status::InProgress, Status::Done, Status::Blocked];
-        self.state.tasks.values().filter(|t| t.status == STATUSES[col]).count()
     }
 
     /// Poll the file watcher channel and apply any new operations.
@@ -890,9 +768,8 @@ impl App {
 mod tests {
     use super::*;
     use crate::theme::Theme;
-    use swarmit_core::models::Status;
     use swarmit_core::events::operations::{Operation, OperationKind};
-    use swarmit_core::models::{AgentId, Priority};
+    use swarmit_core::models::{AgentId, Priority, Status};
 
     #[test]
     fn filter_dialog_opens_with_current_filter_preselected() {
@@ -1134,72 +1011,42 @@ mod tests {
     }
 
     #[test]
-    fn back_from_dashboard_task_detail_returns_to_dashboard() {
-        // Navigate: Dashboard → TaskDetail (from dashboard) → Esc → Dashboard
+    fn toggle_detail_pane_opens_and_closes() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
 
-        let task_id = ItemId::new("TASK", 1);
-        let _ = app.state.apply(Operation::new(
-            make_agent(),
-            OperationKind::CreateTask {
-                id: task_id.clone(),
-                title: "Orphan task".to_string(),
-                description: None,
-                priority: Priority::Medium,
-                epic_id: None,
-            },
-        ));
-        app.rebuild_dashboard_rows();
+        assert!(!app.detail_open);
 
-        // Navigate from dashboard directly to a task detail
-        app.navigate_to(Screen::TaskDetail { task_id: task_id.clone() });
-        assert_eq!(app.screen, Screen::TaskDetail { task_id: task_id.clone() });
-        assert_eq!(app.screen_history, vec![Screen::Dashboard]);
+        app.handle_action(Action::ToggleDetailPane);
+        assert!(app.detail_open);
 
-        // Pressing Esc should pop back to Dashboard, not Board
-        app.handle_action(Action::Back);
-        assert_eq!(app.screen, Screen::Dashboard);
-        assert!(app.screen_history.is_empty());
+        app.handle_action(Action::ToggleDetailPane);
+        assert!(!app.detail_open);
     }
 
     #[test]
-    fn back_from_board_task_detail_returns_to_board() {
-        // Navigate: Dashboard → Board → TaskDetail → Esc → Board
-        let (mut app, epic_id, task_id) = setup_app_with_epic();
-
-        // Navigate to Board
-        app.navigate_to(Screen::Board { epic_id: epic_id.clone() });
-        // Navigate to TaskDetail from Board
-        app.navigate_to(Screen::TaskDetail { task_id: task_id.clone() });
-
-        assert_eq!(
-            app.screen_history,
-            vec![
-                Screen::Dashboard,
-                Screen::Board { epic_id: epic_id.clone() }
-            ]
-        );
-
-        // Esc should pop back to Board
-        app.handle_action(Action::Back);
-        assert_eq!(app.screen, Screen::Board { epic_id: epic_id.clone() });
-        assert_eq!(app.screen_history, vec![Screen::Dashboard]);
-    }
-
-    #[test]
-    fn back_from_dashboard_is_noop() {
-        // Pressing Esc with an empty history stays on Dashboard
+    fn back_closes_detail_pane_when_open() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
 
-        assert_eq!(app.screen, Screen::Dashboard);
-        assert!(app.screen_history.is_empty());
+        app.detail_open = true;
+        app.handle_action(Action::Back);
+
+        assert!(!app.detail_open);
+        assert!(app.modal.is_none());
+    }
+
+    #[test]
+    fn back_on_main_without_detail_shows_quit_dialog() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+
+        assert_eq!(app.screen, Screen::Main);
+        assert!(!app.detail_open);
 
         app.handle_action(Action::Back);
 
-        assert_eq!(app.screen, Screen::Dashboard);
-        assert!(app.screen_history.is_empty());
+        assert!(matches!(app.modal, Some(Modal::QuitConfirm)));
     }
 
     #[test]
@@ -1258,114 +1105,8 @@ mod tests {
             .filter_map(|r| if let DashboardRow::Task { id } = r { Some(id) } else { None })
             .collect();
 
-        // Tasks under epic should remain in creation order (task_id1 before task_id2)
-        assert_eq!(task_rows, vec![&task_id1, &task_id2]);
-    }
-
-    // ── GlobalBoard tests ────────────────────────────────────────────────────
-
-    #[test]
-    fn goto_global_board_sets_screen_and_resets_indices() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
-        app.handle_action(Action::GotoGlobalBoard);
-        assert_eq!(app.screen, Screen::GlobalBoard);
-        assert_eq!(app.selected_index, 0);
-        assert_eq!(app.selected_column, 0);
-    }
-
-    #[test]
-    fn col_right_increments_column_and_col_left_decrements() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
-        app.screen = Screen::GlobalBoard;
-        app.handle_action(Action::ColRight);
-        assert_eq!(app.selected_column, 1);
-        app.handle_action(Action::ColLeft);
-        assert_eq!(app.selected_column, 0);
-    }
-
-    #[test]
-    fn col_left_at_zero_is_noop() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
-        app.screen = Screen::GlobalBoard;
-        app.selected_column = 0;
-        app.handle_action(Action::ColLeft);
-        assert_eq!(app.selected_column, 0);
-    }
-
-    #[test]
-    fn col_right_at_three_is_noop() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
-        app.screen = Screen::GlobalBoard;
-        app.selected_column = 3;
-        app.handle_action(Action::ColRight);
-        assert_eq!(app.selected_column, 3);
-    }
-
-    #[test]
-    fn col_right_clamps_selected_index_to_new_column_count() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
-        // Create 2 Todo tasks + 1 InProgress task
-        for i in 1..=3 {
-            let _ = app.state.apply(Operation::new(
-                make_agent(),
-                OperationKind::CreateTask {
-                    id: ItemId::new("TASK", i),
-                    title: format!("Task {}", i),
-                    description: None,
-                    priority: Priority::Medium,
-                    epic_id: None,
-                },
-            ));
-        }
-        let _ = app.state.apply(Operation::new(
-            make_agent(),
-            OperationKind::UpdateTaskStatus {
-                id: ItemId::new("TASK", 1),
-                status: Status::InProgress,
-            },
-        ));
-        // 2 Todo tasks remain; 1 InProgress
-        app.screen = Screen::GlobalBoard;
-        app.selected_column = 0; // Todo column
-        app.selected_index = 1;  // last Todo task
-        app.handle_action(Action::ColRight); // move to InProgress (1 task)
-        assert_eq!(app.selected_column, 1);
-        assert_eq!(app.selected_index, 0); // clamped from 1 → 0
-    }
-
-    #[test]
-    fn tasks_in_column_returns_correct_count() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
-        for i in 1..=3 {
-            let _ = app.state.apply(Operation::new(
-                make_agent(),
-                OperationKind::CreateTask {
-                    id: ItemId::new("TASK", i),
-                    title: format!("Task {}", i),
-                    description: None,
-                    priority: Priority::Medium,
-                    epic_id: None,
-                },
-            ));
-        }
-        assert_eq!(app.tasks_in_column(0), 3); // Todo
-        assert_eq!(app.tasks_in_column(1), 0); // InProgress
-    }
-
-    #[test]
-    fn go_back_from_global_board_returns_to_dashboard() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
-        app.handle_action(Action::GotoGlobalBoard);
-        assert_eq!(app.screen, Screen::GlobalBoard);
-        app.handle_action(Action::Back);
-        assert_eq!(app.screen, Screen::Dashboard);
+        assert_eq!(task_rows.len(), 2);
+        assert_eq!(task_rows[0], &task_id1);
+        assert_eq!(task_rows[1], &task_id2);
     }
 }
-

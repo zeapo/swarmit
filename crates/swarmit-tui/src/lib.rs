@@ -15,7 +15,7 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Layout},
     Terminal,
 };
 
@@ -69,37 +69,30 @@ fn run_loop(
             let size = f.area();
 
             // Reserve bottom row for status bar
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(1)])
-                .split(size);
+            let chunks = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(size);
 
             let main_area = chunks[0];
             let status_area = chunks[1];
 
             // Render current screen
-            match &app.screen.clone() {
-                Screen::Dashboard => {
-                    components::dashboard::render(f, app, main_area);
-                }
-                Screen::Board { epic_id } => {
-                    let eid = epic_id.clone();
-                    components::board::render(f, app, main_area, &eid);
-                }
-                Screen::TaskDetail { task_id } => {
-                    let tid = task_id.clone();
-                    components::task_detail::render(f, app, main_area, &tid);
-                }
-                Screen::Activity => {
-                    components::activity::render(f, app, main_area);
+            match &app.screen {
+                Screen::Main => {
+                    if app.detail_open {
+                        let split = Layout::vertical([
+                            Constraint::Percentage(50),
+                            Constraint::Percentage(50),
+                        ])
+                        .split(main_area);
+                        components::tree_list::render(f, app, split[0]);
+                        components::detail_pane::render(f, app, split[1]);
+                    } else {
+                        components::tree_list::render(f, app, main_area);
+                    }
                 }
                 Screen::Help => {
-                    // Render dashboard underneath help overlay
-                    components::dashboard::render(f, app, main_area);
+                    // Render tree underneath help overlay
+                    components::tree_list::render(f, app, main_area);
                     components::help::render(f, &app.theme, main_area);
-                }
-                Screen::GlobalBoard => {
-                    components::global_board::render(f, app, main_area);
                 }
             }
 
@@ -131,7 +124,7 @@ fn run_loop(
                 if app.modal.is_some() {
                     app.handle_modal_key(key.code, key.modifiers);
                 } else {
-                    let action = key_to_action(key.code, key.modifiers, &app.screen);
+                    let action = key_to_action(key.code, key.modifiers);
                     app.handle_action(action);
                 }
 
@@ -146,28 +139,21 @@ fn run_loop(
     }
 }
 
-fn key_to_action(code: KeyCode, _modifiers: KeyModifiers, screen: &Screen) -> Action {
+fn key_to_action(code: KeyCode, _modifiers: KeyModifiers) -> Action {
     match code {
         KeyCode::Char('q') => Action::QuitRequest,
         KeyCode::Char('n') => Action::NewTask,
         KeyCode::Char('j') | KeyCode::Down => Action::Down,
         KeyCode::Char('k') | KeyCode::Up => Action::Up,
-        KeyCode::Enter => Action::Select,
-        KeyCode::Char(' ') if matches!(screen, Screen::Dashboard) => Action::ToggleCollapse,
-        KeyCode::Char('b') if matches!(screen, Screen::Dashboard) => Action::GotoGlobalBoard,
-        KeyCode::Char('h') if matches!(screen, Screen::Dashboard) => Action::CollapseEpic,
-        KeyCode::Char('l') if matches!(screen, Screen::Dashboard) => Action::ExpandEpic,
-        KeyCode::Char('f') if matches!(screen, Screen::Dashboard) => Action::OpenFilterDialog,
-        KeyCode::Char('s') if matches!(screen, Screen::Dashboard) => Action::OpenSortDialog,
-        KeyCode::Char('h') if matches!(screen, Screen::GlobalBoard) => Action::ColLeft,
-        KeyCode::Char('l') if matches!(screen, Screen::GlobalBoard) => Action::ColRight,
+        KeyCode::Enter => Action::ToggleDetailPane,
+        KeyCode::Char(' ') => Action::ToggleCollapse,
+        KeyCode::Char('h') => Action::CollapseEpic,
+        KeyCode::Char('l') => Action::ExpandEpic,
+        KeyCode::Char('f') => Action::OpenFilterDialog,
+        KeyCode::Char('s') => Action::OpenSortDialog,
         KeyCode::Esc => Action::Back,
         KeyCode::Char('?') => Action::Help,
         KeyCode::Char('/') => Action::Search,
-        KeyCode::Char('c') => Action::ClaimTask,
-        KeyCode::Char('s') => Action::ChangeStatus,
-        KeyCode::Char('1') => Action::GotoDashboard,
-        KeyCode::Char('2') => Action::GotoActivity,
         KeyCode::Char('r') => Action::Refresh,
         _ => Action::None,
     }

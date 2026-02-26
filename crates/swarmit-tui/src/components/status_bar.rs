@@ -23,33 +23,27 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                 };
                 ("New Task".to_string(), hints)
             }
-            Modal::FilterSelect { .. } => ("Dashboard".to_string(), "j/k:move  Enter:select  Esc:cancel"),
-            Modal::SortSelect { .. } => ("Dashboard".to_string(), "j/k:move  Enter:select  Esc:cancel"),
+            Modal::FilterSelect { .. } => ("Tasks".to_string(), "j/k:move  Enter:select  Esc:cancel"),
+            Modal::SortSelect { .. } => ("Tasks".to_string(), "j/k:move  Enter:select  Esc:cancel"),
         }
     } else {
         match &app.screen {
-            Screen::Dashboard => {
+            Screen::Main => {
                 let filter_label = match &app.dashboard_filter {
                     None => "All".to_string(),
                     Some(s) => format!("{}", s),
                 };
                 let sort_label = app.dashboard_sort.label();
                 (
-                    format!("Dashboard [{}] [{}]", filter_label, sort_label),
-                    "j/k:move  Enter:open  Space:expand  f:filter  s:sort  n:new  b:board  1:dashboard  2:activity  ?:help  q:quit",
+                    format!("[{}] [{}]", filter_label, sort_label),
+                    if app.detail_open {
+                        "j/k:move  Enter:close detail  Space:expand  f:filter  s:sort  n:new  ?:help  q:quit"
+                    } else {
+                        "j/k:move  Enter:open detail  Space:expand  f:filter  s:sort  n:new  ?:help  q:quit"
+                    },
                 )
             }
-            Screen::Board { .. } => (
-                "Board".to_string(),
-                "j/k:move  Enter:detail  n:new task  c:claim  s:status  Esc:back  ?:help",
-            ),
-            Screen::TaskDetail { .. } => ("Task Detail".to_string(), "Esc:back  c:claim  s:status  ?:help"),
-            Screen::Activity => ("Activity".to_string(), "j/k:scroll  Esc:back  ?:help"),
-            Screen::GlobalBoard => (
-                "Global Board".to_string(),
-                "j/k:move  h/l:col  Esc:back  ?:help",
-            ),
-            Screen::Help => ("Help".to_string(), "Esc:close"),
+            Screen::Help => ("Help".to_string(), "Esc/?:close"),
         }
     };
 
