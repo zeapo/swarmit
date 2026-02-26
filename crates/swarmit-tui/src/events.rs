@@ -62,6 +62,8 @@ pub enum Modal {
         priority_index: usize,
         focused_field: TaskFormField,
         error: Option<String>,
+        /// True when Esc was pressed on a non-empty form — awaiting y/n confirmation.
+        confirm_discard: bool,
     },
     FilterSelect { selected_index: usize },
     SortSelect { selected_index: usize },

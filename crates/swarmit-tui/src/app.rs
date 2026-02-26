@@ -164,6 +164,7 @@ impl App {
                 self.modal = Some(Modal::TaskCreate {
                     title: String::new(),
                     cursor_pos: 0,
+                    confirm_discard: false,
                     description: vec![String::new()],
                     desc_row: 0,
                     desc_col: 0,
@@ -354,6 +355,22 @@ impl App {
     }
 
     fn handle_task_form_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
+        // When awaiting discard confirmation, intercept all keys before normal dispatch.
+        if matches!(&self.modal, Some(Modal::TaskCreate { confirm_discard: true, .. })) {
+            match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Esc => {
+                    self.modal = None;
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => {
+                    if let Some(Modal::TaskCreate { ref mut confirm_discard, .. }) = self.modal {
+                        *confirm_discard = false;
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
         let Some(Modal::TaskCreate {
             ref mut title,
             ref mut cursor_pos,
@@ -364,6 +381,7 @@ impl App {
             ref mut priority_index,
             ref mut focused_field,
             ref mut error,
+            ref mut confirm_discard,
         }) = self.modal
         else {
             return;
@@ -409,7 +427,13 @@ impl App {
                     return;
                 }
                 KeyCode::Esc => {
-                    self.modal = None;
+                    let has_content = !title.trim().is_empty()
+                        || description.iter().any(|l| !l.is_empty());
+                    if has_content {
+                        *confirm_discard = true;
+                    } else {
+                        self.modal = None;
+                    }
                     return;
                 }
                 _ => {}
@@ -496,7 +520,13 @@ impl App {
                     return;
                 }
                 KeyCode::Esc => {
-                    self.modal = None;
+                    let has_content = !title.trim().is_empty()
+                        || description.iter().any(|l| !l.is_empty());
+                    if has_content {
+                        *confirm_discard = true;
+                    } else {
+                        self.modal = None;
+                    }
                     return;
                 }
                 _ => {}
@@ -527,7 +557,13 @@ impl App {
                     return;
                 }
                 KeyCode::Esc => {
-                    self.modal = None;
+                    let has_content = !title.trim().is_empty()
+                        || description.iter().any(|l| !l.is_empty());
+                    if has_content {
+                        *confirm_discard = true;
+                    } else {
+                        self.modal = None;
+                    }
                     return;
                 }
                 _ => {}
@@ -558,7 +594,13 @@ impl App {
                     return;
                 }
                 KeyCode::Esc => {
-                    self.modal = None;
+                    let has_content = !title.trim().is_empty()
+                        || description.iter().any(|l| !l.is_empty());
+                    if has_content {
+                        *confirm_discard = true;
+                    } else {
+                        self.modal = None;
+                    }
                     return;
                 }
                 _ => {}

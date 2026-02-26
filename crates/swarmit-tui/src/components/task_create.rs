@@ -25,6 +25,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         priority_index,
         ref focused_field,
         ref error,
+        confirm_discard,
     }) = app.modal
     else {
         return;
@@ -184,8 +185,17 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     ]);
     f.render_widget(Paragraph::new(prio_line), meta_chunks[1]);
 
-    // ── Error row ─────────────────────────────────────────────────────────────
-    if let Some(err) = error {
+    // ── Error / discard-confirm row ───────────────────────────────────────────
+    if confirm_discard {
+        let prompt = Paragraph::new(Line::from(vec![
+            Span::styled("Discard changes? ", Style::default().fg(theme.warning())),
+            Span::styled("[y]", theme.focus_style()),
+            Span::styled(" Yes  ", theme.normal_style()),
+            Span::styled("[n]", theme.focus_style()),
+            Span::styled(" No", theme.normal_style()),
+        ]));
+        f.render_widget(prompt, chunks[7]);
+    } else if let Some(err) = error {
         let err_para = Paragraph::new(Line::from(Span::styled(
             format!("✗ {}", err),
             Style::default().fg(theme.error()),
