@@ -10,6 +10,8 @@ fn cat(c: CatColor) -> Color {
 /// Detected once at startup (before raw mode) and stored on [`App`].
 pub struct Theme {
     colors: &'static FlavorColors,
+    /// Name of the matching bat syntax-highlighting theme.
+    bat_theme: &'static str,
 }
 
 impl Theme {
@@ -20,24 +22,28 @@ impl Theme {
     /// 2. Terminal background luminance via `terminal-colorsaurus`
     /// 3. Default: Mocha (dark)
     pub fn detect() -> Self {
-        let flavor = if let Ok(name) = std::env::var("SWARMIT_THEME") {
+        let (flavor, bat_theme) = if let Ok(name) = std::env::var("SWARMIT_THEME") {
             match name.to_lowercase().as_str() {
-                "latte" => &PALETTE.latte,
-                "frappe" => &PALETTE.frappe,
-                "macchiato" => &PALETTE.macchiato,
-                "mocha" => &PALETTE.mocha,
-                _ => &PALETTE.mocha,
+                "latte" => (&PALETTE.latte, "Catppuccin Latte"),
+                "frappe" => (&PALETTE.frappe, "Catppuccin Frappe"),
+                "macchiato" => (&PALETTE.macchiato, "Catppuccin Macchiato"),
+                "mocha" => (&PALETTE.mocha, "Catppuccin Mocha"),
+                _ => (&PALETTE.mocha, "Catppuccin Mocha"),
             }
         } else {
             match terminal_colorsaurus::theme_mode(terminal_colorsaurus::QueryOptions::default()) {
-                Ok(terminal_colorsaurus::ThemeMode::Light) => &PALETTE.latte,
-                _ => &PALETTE.mocha,
+                Ok(terminal_colorsaurus::ThemeMode::Light) => (&PALETTE.latte, "Catppuccin Latte"),
+                _ => (&PALETTE.mocha, "Catppuccin Mocha"),
             }
         };
-        Theme { colors: &flavor.colors }
+        Theme { colors: &flavor.colors, bat_theme }
     }
 
     // ── Raw color accessors ──────────────────────────────────────────────
+
+    pub fn bat_theme(&self) -> &'static str {
+        self.bat_theme
+    }
 
     pub fn text(&self) -> Color {
         cat(self.colors.text)

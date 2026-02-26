@@ -22,23 +22,15 @@ thread_local! {
     static ASSETS: HighlightingAssets = HighlightingAssets::from_binary();
 }
 
-/// Pick a bat syntax-highlight theme based on the SWARMIT_THEME env var.
-fn bat_theme() -> &'static str {
-    match std::env::var("SWARMIT_THEME").as_deref() {
-        Ok("latte") => "GitHub",
-        _ => "Monokai Extended",
-    }
-}
-
 /// Render `content` as syntax-highlighted markdown using bat's bundled
 /// syntax definitions and themes. Falls back to plain text on any error.
-fn highlight_markdown(content: &str) -> Text<'static> {
+fn highlight_markdown(content: &str, bat_theme: &str) -> Text<'static> {
     ASSETS.with(|assets| {
         let ss = match assets.get_syntax_set() {
             Ok(ss) => ss,
             Err(_) => return Text::from(content.to_owned()),
         };
-        let theme = assets.get_theme(bat_theme());
+        let theme = assets.get_theme(bat_theme);
 
         let syntax = ss
             .find_syntax_by_extension("md")
@@ -223,7 +215,7 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
 
     // ── Description (full width, scrollable, bat-highlighted markdown) ───
     let desc_content: Text<'static> = if let Some(raw) = task.description.as_deref() {
-        highlight_markdown(raw)
+        highlight_markdown(raw, app.theme.bat_theme())
     } else {
         Text::from(Line::from(Span::styled(
             "No description.",
