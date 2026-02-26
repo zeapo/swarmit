@@ -231,12 +231,22 @@ impl App {
             }
             Action::ToggleCollapse => {
                 if let Some(eid) = self.epic_id_at_selection() {
-                    if self.collapsed_epics.contains(&eid) {
-                        self.collapsed_epics.remove(&eid);
+                    let collapsing = !self.collapsed_epics.contains(&eid);
+                    if collapsing {
+                        self.collapsed_epics.insert(eid.clone());
                     } else {
-                        self.collapsed_epics.insert(eid);
+                        self.collapsed_epics.remove(&eid);
                     }
                     self.rebuild_dashboard_rows();
+                    // After collapsing, move selection to the epic itself
+                    // so focus doesn't land on the next epic below.
+                    if collapsing {
+                        if let Some(pos) = self.dashboard_rows.iter().position(|r| {
+                            matches!(r, DashboardRow::Epic { id } if id == &eid)
+                        }) {
+                            self.selected_index = pos;
+                        }
+                    }
                 }
             }
             action => self.apply_action(action),
@@ -978,7 +988,7 @@ mod tests {
     }
 
     #[test]
-    fn toggle_collapse_from_task_row_uses_parent_epic() {
+    fn toggle_collapse_from_task_row_moves_selection_to_epic() {
         let (mut app, epic_id, _task_id) = setup_app_with_epic();
 
         // Select the task row (index 1) instead of the epic row
@@ -988,6 +998,8 @@ mod tests {
 
         assert!(app.collapsed_epics.contains(&epic_id));
         assert_eq!(app.dashboard_rows.len(), 1);
+        // Selection must land on the epic, not the next row below it
+        assert_eq!(app.selected_index, 0);
     }
 
     #[test]
