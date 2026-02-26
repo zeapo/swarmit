@@ -1,16 +1,83 @@
+use bat::assets::HighlightingAssets;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::Style,
-    text::{Line, Span},
+    style::{Color, Style},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
+use syntect::easy::HighlightLines;
+use syntect::util::LinesWithEndings;
 
 use swarmit_core::models::ItemId;
 
 use crate::app::App;
 use crate::components::tree_list::DashboardRow;
 use crate::events::Focus;
+
+// Bat's bundled highlighting assets, loaded once per thread on first use.
+// `HighlightingAssets` uses `unsync::OnceCell` internally so it isn't `Sync`;
+// `thread_local!` avoids that requirement.
+thread_local! {
+    static ASSETS: HighlightingAssets = HighlightingAssets::from_binary();
+}
+
+/// Pick a bat syntax-highlight theme based on the SWARMIT_THEME env var.
+fn bat_theme() -> &'static str {
+    match std::env::var("SWARMIT_THEME").as_deref() {
+        Ok("latte") => "GitHub",
+        _ => "Monokai Extended",
+    }
+}
+
+/// Render `content` as syntax-highlighted markdown using bat's bundled
+/// syntax definitions and themes. Falls back to plain text on any error.
+fn highlight_markdown(content: &str) -> Text<'static> {
+    ASSETS.with(|assets| {
+        let ss = match assets.get_syntax_set() {
+            Ok(ss) => ss,
+            Err(_) => return Text::from(content.to_owned()),
+        };
+        let theme = assets.get_theme(bat_theme());
+
+        let syntax = ss
+            .find_syntax_by_extension("md")
+            .unwrap_or_else(|| ss.find_syntax_plain_text());
+
+        let mut h = HighlightLines::new(syntax, theme);
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        for line_str in LinesWithEndings::from(content) {
+            match h.highlight_line(line_str, ss) {
+                Ok(ranges) => {
+                    let spans: Vec<Span<'static>> = ranges
+                        .iter()
+                        .map(|(style, text)| {
+                            let owned = text
+                                .trim_end_matches(|c: char| c == '\n' || c == '\r')
+                                .to_owned();
+                            let fg = Color::Rgb(
+                                style.foreground.r,
+                                style.foreground.g,
+                                style.foreground.b,
+                            );
+                            Span::styled(owned, Style::default().fg(fg))
+                        })
+                        .filter(|s| !s.content.is_empty())
+                        .collect();
+                    lines.push(Line::from(spans));
+                }
+                Err(_) => lines.push(Line::from(
+                    line_str
+                        .trim_end_matches(|c: char| c == '\n' || c == '\r')
+                        .to_owned(),
+                )),
+            }
+        }
+
+        Text::from(lines)
+    })
+}
 
 /// Renders the 1-row context breadcrumb above the detail pane.
 /// Shows the path to the selected item: "EPIC-001 › TASK-003 · Title" or "EPIC-001 · Title".
@@ -154,9 +221,16 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
         .wrap(Wrap { trim: true });
     f.render_widget(meta, chunks[0]);
 
-    // ── Description (full width, scrollable) ─────────────────────────────
-    let desc_text = task.description.as_deref().unwrap_or("No description.");
-    let desc = Paragraph::new(desc_text)
+    // ── Description (full width, scrollable, bat-highlighted markdown) ───
+    let desc_content: Text<'static> = if let Some(raw) = task.description.as_deref() {
+        highlight_markdown(raw)
+    } else {
+        Text::from(Line::from(Span::styled(
+            "No description.",
+            theme.muted_style(),
+        )))
+    };
+    let desc = Paragraph::new(desc_content)
         .block(
             Block::default()
                 .borders(Borders::ALL)
