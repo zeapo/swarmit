@@ -73,6 +73,9 @@ pub struct App {
     pub log_offset: u64,
 
     pub log_path: PathBuf,
+    pub snapshot_path: PathBuf,
+    /// Byte offset at which the last snapshot was taken.
+    pub snapshot_offset: u64,
     pub should_quit: bool,
 
     // Search/filter string (future).
@@ -100,14 +103,14 @@ pub struct App {
 impl App {
     pub fn new(project_root: PathBuf, theme: Theme) -> Result<Self> {
         let log_path = project_root.join(".swarmit").join("operations.log");
-        let state = ProjectState::from_log(&log_path)?;
+        let snapshot_path = project_root.join(".swarmit/state.snap");
 
-        // Seed the byte offset so incremental reads start from end of file.
-        let log_offset = if log_path.exists() {
-            std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0)
-        } else {
-            0
-        };
+        let (state, log_offset) = swarmit_core::load_state(&project_root)?;
+        let snapshot_offset = swarmit_core::state::read_snapshot(&snapshot_path)
+            .ok()
+            .flatten()
+            .map(|s| s.log_offset)
+            .unwrap_or(0);
 
         let (tx, rx) = mpsc::channel();
 
@@ -131,6 +134,8 @@ impl App {
             _debouncer: Some(debouncer),
             log_offset,
             log_path,
+            snapshot_path,
+            snapshot_offset,
             should_quit: false,
             search_query: String::new(),
             modal: None,
@@ -631,6 +636,17 @@ impl App {
                 self.log_offset = std::fs::metadata(&log_path)
                     .map(|m| m.len())
                     .unwrap_or(self.log_offset);
+                // Trigger auto-snapshot if threshold is met
+                let _ = swarmit_core::check_and_write_snapshot(
+                    &self.log_path,
+                    &self.snapshot_path,
+                    self.log_offset,
+                    self.snapshot_offset,
+                    &self.state,
+                );
+                if swarmit_core::state::should_snapshot(self.log_offset, self.snapshot_offset) {
+                    self.snapshot_offset = self.log_offset;
+                }
                 self.modal = None;
                 self.rebuild_dashboard_rows();
             }
