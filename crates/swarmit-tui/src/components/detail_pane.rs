@@ -11,6 +11,36 @@ use swarmit_core::models::ItemId;
 use crate::app::App;
 use crate::components::tree_list::DashboardRow;
 
+/// Renders the 1-row context breadcrumb above the detail pane.
+/// Shows the path to the selected item: "EPIC-001 › TASK-003 · Title" or "EPIC-001 · Title".
+pub fn render_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
+    let theme = &app.theme;
+
+    let text = match app.dashboard_rows.get(app.selected_index) {
+        None => "  No selection".to_string(),
+        Some(DashboardRow::Task { id }) => {
+            let Some(task) = app.state.tasks.get(id) else {
+                return;
+            };
+            if let Some(epic_id) = &task.epic_id {
+                format!("  {} › {} · {}", epic_id, task.id, task.title)
+            } else {
+                format!("  {} · {}", task.id, task.title)
+            }
+        }
+        Some(DashboardRow::Epic { id }) => {
+            let Some(epic) = app.state.epics.get(id) else {
+                return;
+            };
+            format!("  {} · {}", epic.id, epic.title)
+        }
+    };
+
+    let line = Line::from(Span::styled(text, theme.header_style()));
+    let para = Paragraph::new(line).style(theme.header_style());
+    f.render_widget(para, area);
+}
+
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
 

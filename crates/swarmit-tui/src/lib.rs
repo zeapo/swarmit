@@ -84,7 +84,14 @@ fn run_loop(
                         ])
                         .split(main_area);
                         components::tree_list::render(f, app, split[0]);
-                        components::detail_pane::render(f, app, split[1]);
+                        // Bottom half: 1-row breadcrumb + detail pane content
+                        let bottom = Layout::vertical([
+                            Constraint::Length(1),
+                            Constraint::Min(0),
+                        ])
+                        .split(split[1]);
+                        components::detail_pane::render_breadcrumb(f, app, bottom[0]);
+                        components::detail_pane::render(f, app, bottom[1]);
                     } else {
                         components::tree_list::render(f, app, main_area);
                     }
