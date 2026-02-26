@@ -40,7 +40,15 @@ notify-debouncer-mini = "0.7"
 catppuccin = { version = "2", features = ["ratatui"] }
 terminal-colorsaurus = "1"
 
+# Profiling (optional)
+tracing = "0.1"
+tracing-chrome = "0.7"
+tracing-subscriber = "0.3"
+
 # Internal
 swarmit-core = { path = "crates/swarmit-core" }
 swarmit-cli = { path = "crates/swarmit-cli" }
 swarmit-tui = { path = "crates/swarmit-tui" }
+
+[profile.release]
+debug = true

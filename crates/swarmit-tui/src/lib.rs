@@ -23,11 +23,41 @@ use app::App;
 use events::{Action, Modal, Screen};
 use theme::Theme;
 
+/// Creates a tracing span guard. Compiles to nothing without `profiling`.
+macro_rules! prof_guard {
+    ($name:expr) => {{
+        #[cfg(feature = "profiling")]
+        let _guard = ::tracing::info_span!($name).entered();
+        #[cfg(not(feature = "profiling"))]
+        let _guard = ();
+        _guard
+    }};
+}
+pub(crate) use prof_guard;
+
 /// Entry point for the TUI.
 pub fn run(project_root: &Path) -> Result<()> {
     // Detect theme BEFORE entering raw mode — terminal-colorsaurus sends OSC
     // escape sequences that require cooked mode for the terminal to respond.
     let theme = Theme::detect();
+
+    // Initialize Chrome trace subscriber (no-op without `profiling` feature).
+    #[cfg(feature = "profiling")]
+    let trace_path = format!(
+        "/tmp/swarmit-trace-{}.json",
+        ::chrono::Local::now().format("%Y%m%d-%H%M%S")
+    );
+    #[cfg(feature = "profiling")]
+    let _flush_guard = {
+        use tracing_subscriber::prelude::*;
+        let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+            .file(&trace_path)
+            .build();
+        tracing_subscriber::registry()
+            .with(chrome_layer)
+            .init();
+        guard
+    };
 
     // Terminal setup
     enable_raw_mode()?;
@@ -49,6 +79,13 @@ pub fn run(project_root: &Path) -> Result<()> {
     // Always restore terminal
     restore_terminal()?;
 
+    // Flush trace file and report its path (no-op without `profiling` feature).
+    #[cfg(feature = "profiling")]
+    {
+        drop(_flush_guard);
+        eprintln!("Trace written to: {}", trace_path);
+    }
+
     result
 }
 
@@ -64,75 +101,99 @@ fn run_loop(
     app: &mut App,
 ) -> Result<()> {
     loop {
+        let _frame_guard = prof_guard!("frame");
+
         // Draw frame
-        terminal.draw(|f| {
-            let size = f.area();
+        {
+            let _g = prof_guard!("terminal_draw");
+            terminal.draw(|f| {
+                let size = f.area();
 
-            // Reserve bottom row for status bar
-            let chunks = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(size);
+                // Reserve bottom row for status bar
+                let chunks =
+                    Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(size);
 
-            let main_area = chunks[0];
-            let status_area = chunks[1];
+                let main_area = chunks[0];
+                let status_area = chunks[1];
 
-            // Render current screen
-            match &app.screen {
-                Screen::Main => {
-                    if app.detail_open {
-                        let split = Layout::horizontal([
-                            Constraint::Length(30),
-                            Constraint::Min(40),
-                        ])
-                        .split(main_area);
-                        components::tree_list::render(f, app, split[0]);
-                        // Right side: 1-row breadcrumb + detail pane content
-                        let right = Layout::vertical([
-                            Constraint::Length(1),
-                            Constraint::Min(0),
-                        ])
-                        .split(split[1]);
-                        components::detail_pane::render_breadcrumb(f, app, right[0]);
-                        components::detail_pane::render(f, app, right[1]);
-                    } else {
+                // Render current screen
+                match &app.screen {
+                    Screen::Main => {
+                        if app.detail_open {
+                            let split = Layout::horizontal([
+                                Constraint::Length(30),
+                                Constraint::Min(40),
+                            ])
+                            .split(main_area);
+                            components::tree_list::render(f, app, split[0]);
+                            // Right side: 1-row breadcrumb + detail pane content
+                            let right = Layout::vertical([
+                                Constraint::Length(1),
+                                Constraint::Min(0),
+                            ])
+                            .split(split[1]);
+                            components::detail_pane::render_breadcrumb(f, app, right[0]);
+                            components::detail_pane::render(f, app, right[1]);
+                        } else {
+                            components::tree_list::render(f, app, main_area);
+                        }
+                    }
+                    Screen::Help => {
+                        // Render tree underneath help overlay
                         components::tree_list::render(f, app, main_area);
+                        components::help::render(f, &app.theme, main_area);
                     }
                 }
-                Screen::Help => {
-                    // Render tree underneath help overlay
-                    components::tree_list::render(f, app, main_area);
-                    components::help::render(f, &app.theme, main_area);
-                }
-            }
 
-            // Render modal overlay (if any) on top of the current screen
-            if let Some(modal) = &app.modal {
-                match modal {
-                    Modal::QuitConfirm => components::quit_confirm::render(f, &app.theme, main_area),
-                    Modal::TaskCreate { .. } => components::task_create::render(f, app, main_area),
-                    Modal::FilterSelect { selected_index } => {
-                        components::filter_select::render(f, app, *selected_index, main_area)
-                    }
-                    Modal::SortSelect { selected_index } => {
-                        components::sort_select::render(f, app, *selected_index, main_area)
+                // Render modal overlay (if any) on top of the current screen
+                if let Some(modal) = &app.modal {
+                    match modal {
+                        Modal::QuitConfirm => {
+                            components::quit_confirm::render(f, &app.theme, main_area)
+                        }
+                        Modal::TaskCreate { .. } => {
+                            components::task_create::render(f, app, main_area)
+                        }
+                        Modal::FilterSelect { selected_index } => {
+                            components::filter_select::render(
+                                f,
+                                app,
+                                *selected_index,
+                                main_area,
+                            )
+                        }
+                        Modal::SortSelect { selected_index } => {
+                            components::sort_select::render(f, app, *selected_index, main_area)
+                        }
                     }
                 }
-            }
 
-            components::status_bar::render(f, app, status_area);
-        })?;
+                components::status_bar::render(f, app, status_area);
+            })?;
+        }
 
         // Poll for keyboard events (100ms timeout = ~10fps)
-        if event::poll(Duration::from_millis(100))? {
+        let has_event = {
+            let _g = prof_guard!("event_poll");
+            event::poll(Duration::from_millis(100))?
+        };
+
+        if has_event {
             if let Event::Key(key) = event::read()? {
                 // Ctrl+C always quits immediately (no dialog)
-                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
                     return Ok(());
                 }
-                // When a modal is open, route all input to the modal handler
-                if app.modal.is_some() {
-                    app.handle_modal_key(key.code, key.modifiers);
-                } else {
-                    let action = key_to_action(key.code, key.modifiers);
-                    app.handle_action(action);
+                {
+                    let _g = prof_guard!("handle_key");
+                    // When a modal is open, route all input to the modal handler
+                    if app.modal.is_some() {
+                        app.handle_modal_key(key.code, key.modifiers);
+                    } else {
+                        let action = key_to_action(key.code, key.modifiers);
+                        app.handle_action(action);
+                    }
                 }
 
                 if app.should_quit {
@@ -142,7 +203,10 @@ fn run_loop(
         }
 
         // Poll file watcher for live refresh
-        app.poll_log_changes();
+        {
+            let _g = prof_guard!("poll_log_changes");
+            app.poll_log_changes();
+        }
     }
 }
 

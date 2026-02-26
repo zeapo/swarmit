@@ -22,9 +22,22 @@ thread_local! {
     static ASSETS: HighlightingAssets = HighlightingAssets::from_binary();
 }
 
+/// Force-load the syntax highlighting assets on the calling thread.
+///
+/// `HighlightingAssets` uses an internal `OnceCell`; calling this at startup
+/// moves the ~989 KB bincode deserialization cost to a predictable moment
+/// rather than the first time a task detail is opened.
+pub fn warm_up_syntax() {
+    let _guard = crate::prof_guard!("warm_up_syntax");
+    ASSETS.with(|a| {
+        let _ = a.get_syntax_set();
+    });
+}
+
 /// Render `content` as syntax-highlighted markdown using bat's bundled
 /// syntax definitions and themes. Falls back to plain text on any error.
-fn highlight_markdown(content: &str, bat_theme: &str) -> Text<'static> {
+pub(crate) fn highlight_markdown(content: &str, bat_theme: &str) -> Text<'static> {
+    let _guard = crate::prof_guard!("highlight_markdown");
     ASSETS.with(|assets| {
         let ss = match assets.get_syntax_set() {
             Ok(ss) => ss,
@@ -102,6 +115,7 @@ pub fn render_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
 }
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
+    let _guard = crate::prof_guard!("detail_pane::render");
     let theme = &app.theme;
 
     let selected = app.dashboard_rows.get(app.selected_index);
@@ -127,6 +141,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
+    let _guard = crate::prof_guard!("detail_pane::render_task");
     let theme = &app.theme;
     let border = if app.focus == Focus::Detail {
         theme.focused_border_style()
@@ -235,6 +250,7 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
 }
 
 fn render_epic(f: &mut Frame, app: &App, area: Rect, epic_id: &ItemId) {
+    let _guard = crate::prof_guard!("detail_pane::render_epic");
     let theme = &app.theme;
     let border = if app.focus == Focus::Detail {
         theme.focused_border_style()

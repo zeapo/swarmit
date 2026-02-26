@@ -7,6 +7,9 @@ edition.workspace = true
 name = "swarmit"
 path = "src/main.rs"
 
+[features]
+profiling = ["swarmit-tui/profiling"]
+
 [dependencies]
 swarmit-core = { workspace = true }
 swarmit-cli = { workspace = true }

@@ -3,6 +3,9 @@ name = "swarmit-tui"
 version.workspace = true
 edition.workspace = true
 
+[features]
+profiling = ["dep:tracing", "dep:tracing-chrome", "dep:tracing-subscriber"]
+
 [dependencies]
 swarmit-core = { workspace = true }
 chrono = { workspace = true }
@@ -15,6 +18,9 @@ catppuccin = { workspace = true }
 terminal-colorsaurus = { workspace = true }
 bat = { version = "0.26", default-features = false, features = ["regex-fancy"] }
 syntect = { version = "5", default-features = false }
+tracing = { workspace = true, optional = true }
+tracing-chrome = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = "3"

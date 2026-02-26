@@ -712,6 +712,7 @@ impl App {
     ///
     /// Structure: orphan tasks first (no epic), then epics with their tasks.
     pub fn rebuild_dashboard_rows(&mut self) {
+        let _guard = crate::prof_guard!("rebuild_dashboard_rows");
         let mut rows = Vec::new();
 
         // Collect all top-level items (orphan tasks and epics) into a unified
@@ -823,6 +824,7 @@ impl App {
 
     /// Poll the file watcher channel and apply any new operations.
     pub fn poll_log_changes(&mut self) {
+        let _guard = crate::prof_guard!("poll_log_changes");
         let Some(rx) = &self.watcher_rx else { return };
 
         // Drain all pending events (non-blocking).

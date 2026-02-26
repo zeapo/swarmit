@@ -22,6 +22,7 @@ pub enum DashboardRow {
 }
 
 pub fn render(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let _guard = crate::prof_guard!("tree_list::render");
     render_tree(f, app, area);
 }
 
