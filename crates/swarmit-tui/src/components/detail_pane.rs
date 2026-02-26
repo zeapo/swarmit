@@ -229,8 +229,14 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
     f.render_widget(meta, chunks[0]);
 
     // ── Description (full width, scrollable, bat-highlighted markdown) ───
-    let desc_content: Text<'static> = if let Some(raw) = task.description.as_deref() {
-        highlight_markdown(raw, app.theme.bat_theme())
+    // Prefer the pre-computed cache to avoid per-frame re-highlighting.
+    // Only use the cache when it holds an actual description (Some(_)); if
+    // the description is None the "No description." placeholder is rendered
+    // via the fallback path below.
+    let desc_content: Text<'static> = if let Some((_, Some(_), ref cached)) = app.highlight_cache {
+        cached.clone()
+    } else if let Some(raw) = task.description.as_deref() {
+        Text::from(raw.to_owned())
     } else {
         Text::from(Line::from(Span::styled(
             "No description.",

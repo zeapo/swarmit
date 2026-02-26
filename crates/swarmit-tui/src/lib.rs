@@ -74,6 +74,10 @@ pub fn run(project_root: &Path) -> Result<()> {
         e
     })?;
 
+    // Eagerly deserialize bat's bundled SyntaxSet (~989 KB bincode) so that
+    // the first task detail open has no visible stall.
+    components::detail_pane::warm_up_syntax();
+
     let result = run_loop(&mut terminal, &mut app);
 
     // Always restore terminal
@@ -102,6 +106,14 @@ fn run_loop(
 ) -> Result<()> {
     loop {
         let _frame_guard = prof_guard!("frame");
+
+        // Refresh the highlight cache before borrowing `app` immutably for the
+        // draw closure.  This runs bat highlighting at most once per content
+        // change rather than once per frame (~10 FPS).
+        {
+            let _g = prof_guard!("refresh_highlight_cache");
+            app.refresh_highlight_cache();
+        }
 
         // Draw frame
         {

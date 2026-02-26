@@ -1,11 +1,12 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
+use ratatui::text::Text;
 use swarmit_core::events::locking::try_append_with_timeout;
 use swarmit_core::events::log::{append_operation, read_operations_since};
 use swarmit_core::events::operations::{Operation, OperationKind};
@@ -50,6 +51,18 @@ pub const FILTER_OPTIONS: &[Option<Status>] = &[
     Some(Status::Done),
     Some(Status::Cancelled),
 ];
+
+struct HighlightRequest {
+    task_id: ItemId,
+    description: String,
+    bat_theme: &'static str,
+}
+
+struct HighlightResult {
+    task_id: ItemId,
+    description: String,
+    text: Text<'static>,
+}
 
 /// Central application state.
 pub struct App {
@@ -101,6 +114,16 @@ pub struct App {
 
     /// Vertical scroll offset for the detail pane.
     pub detail_scroll: usize,
+
+    /// Cache for the syntax-highlighted description of the currently selected task.
+    /// Tuple: (task_id, description_content, rendered_text).
+    /// Avoids re-running bat highlighting on every frame (~10 FPS).
+    pub highlight_cache: Option<(ItemId, Option<String>, Text<'static>)>,
+
+    /// Send highlight work to the background thread.
+    highlight_tx: Sender<HighlightRequest>,
+    /// Receive completed highlights from the background thread.
+    highlight_rx: Receiver<HighlightResult>,
 }
 
 impl App {
@@ -126,6 +149,27 @@ impl App {
                 .watch(&log_path, RecursiveMode::NonRecursive)?;
         }
 
+        let (hl_work_tx, hl_work_rx) = mpsc::channel::<HighlightRequest>();
+        let (hl_result_tx, hl_result_rx) = mpsc::channel::<HighlightResult>();
+
+        std::thread::Builder::new()
+            .name("highlight".into())
+            .spawn(move || {
+                crate::components::detail_pane::warm_up_syntax();
+                while let Ok(req) = hl_work_rx.recv() {
+                    let text = crate::components::detail_pane::highlight_markdown(
+                        &req.description,
+                        req.bat_theme,
+                    );
+                    let _ = hl_result_tx.send(HighlightResult {
+                        task_id: req.task_id,
+                        description: req.description,
+                        text,
+                    });
+                }
+            })
+            .expect("spawn highlight thread");
+
         let mut app = App {
             state,
             screen: Screen::Main,
@@ -148,6 +192,9 @@ impl App {
             detail_open: false,
             focus: Focus::default(),
             detail_scroll: 0,
+            highlight_cache: None,
+            highlight_tx: hl_work_tx,
+            highlight_rx: hl_result_rx,
         };
         app.rebuild_dashboard_rows();
         Ok(app)
@@ -843,6 +890,64 @@ impl App {
                 self.log_offset = new_offset;
                 self.rebuild_dashboard_rows();
             }
+        }
+    }
+
+    /// Refresh the highlight cache for the currently selected task.
+    ///
+    /// Call this once per loop iteration *before* `terminal.draw()` while
+    /// `app` is still `&mut`. The draw closure then reads the cache as `&App`,
+    /// avoiding per-frame re-highlighting.
+    pub fn refresh_highlight_cache(&mut self) {
+        let _guard = crate::prof_guard!("refresh_highlight_cache");
+
+        // 1. Drain completed highlights from background thread.
+        while let Ok(result) = self.highlight_rx.try_recv() {
+            if let Some((ref id, ref desc, _)) = self.highlight_cache {
+                if *id == result.task_id
+                    && desc.as_deref() == Some(result.description.as_str())
+                {
+                    self.highlight_cache =
+                        Some((result.task_id, Some(result.description), result.text));
+                }
+            }
+        }
+
+        // 2. Determine what should be cached.
+        let task_id = match (self.detail_open, self.dashboard_rows.get(self.selected_index)) {
+            (true, Some(DashboardRow::Task { id })) => id.clone(),
+            _ => {
+                self.highlight_cache = None;
+                return;
+            }
+        };
+
+        let description = self
+            .state
+            .tasks
+            .get(&task_id)
+            .and_then(|t| t.description.clone());
+
+        // 3. Cache hit? (matches both plain-text and highlighted entries)
+        if let Some((ref cached_id, ref cached_desc, _)) = self.highlight_cache {
+            if *cached_id == task_id && *cached_desc == description {
+                return;
+            }
+        }
+
+        // 4. Cache miss: store plain text immediately, request highlight async.
+        let plain = match &description {
+            Some(raw) => Text::from(raw.clone()),
+            None => Text::default(),
+        };
+        self.highlight_cache = Some((task_id.clone(), description.clone(), plain));
+
+        if let Some(raw) = &description {
+            let _ = self.highlight_tx.send(HighlightRequest {
+                task_id,
+                description: raw.clone(),
+                bat_theme: self.theme.bat_theme(),
+            });
         }
     }
 }
