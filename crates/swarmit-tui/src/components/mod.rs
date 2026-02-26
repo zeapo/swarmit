@@ -1,3 +1,4 @@
+pub mod crab_parade;
 pub mod detail_pane;
 pub mod filter_select;
 pub mod help;

@@ -5,7 +5,7 @@ pub mod theme;
 
 use std::io;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::{
@@ -104,8 +104,15 @@ fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
 ) -> Result<()> {
+    let mut last_frame = Instant::now();
+
     loop {
         let _frame_guard = prof_guard!("frame");
+
+        // Compute dt for smooth animation regardless of frame rate.
+        let now = Instant::now();
+        let dt = now.duration_since(last_frame).as_secs_f32();
+        last_frame = now;
 
         // Refresh the highlight cache before borrowing `app` immutably for the
         // draw closure.  This runs bat highlighting at most once per content
@@ -180,6 +187,13 @@ fn run_loop(
                     }
                 }
 
+                // Crab parade overlay — rendered on top of all content.
+                if let Some(ref anim) = app.crab_animation {
+                    if anim.active {
+                        components::crab_parade::render(f, anim, size, &app.theme);
+                    }
+                }
+
                 components::status_bar::render(f, app, status_area);
             })?;
         }
@@ -199,12 +213,19 @@ fn run_loop(
                 }
                 {
                     let _g = prof_guard!("handle_key");
-                    // When a modal is open, route all input to the modal handler
-                    if app.modal.is_some() {
-                        app.handle_modal_key(key.code, key.modifiers);
+                    if app.crab_animation.is_some() {
+                        // Any keypress dismisses the crab parade.
+                        app.crab_animation = None;
                     } else {
-                        let action = key_to_action(key.code, key.modifiers);
-                        app.handle_action(action);
+                        // Feed key to Konami tracker before normal dispatch.
+                        if app.konami_tracker.feed(key.code) {
+                            app.start_crab_animation();
+                        } else if app.modal.is_some() {
+                            app.handle_modal_key(key.code, key.modifiers);
+                        } else {
+                            let action = key_to_action(key.code, key.modifiers);
+                            app.handle_action(action);
+                        }
                     }
                 }
 
@@ -212,6 +233,12 @@ fn run_loop(
                     return Ok(());
                 }
             }
+        }
+
+        // Advance and auto-expire the crab animation.
+        app.update_crab_animation(dt);
+        if app.crab_animation.as_ref().map_or(false, |a| a.is_expired()) {
+            app.crab_animation = None;
         }
 
         // Poll file watcher for live refresh

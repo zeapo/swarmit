@@ -14,7 +14,7 @@ use swarmit_core::models::{AgentId, ItemId, Priority, Status};
 use swarmit_core::state::ProjectState;
 
 use crate::components::tree_list::DashboardRow;
-use crate::events::{Action, Focus, Modal, Screen, TaskFormField};
+use crate::events::{Action, Focus, KonamiTracker, Modal, Screen, TaskFormField};
 use crate::theme::Theme;
 
 /// Sort order for the dashboard.
@@ -51,6 +51,86 @@ pub const FILTER_OPTIONS: &[Option<Status>] = &[
     Some(Status::Done),
     Some(Status::Cancelled),
 ];
+
+// --- Crab parade animation types ---
+
+pub struct Crab {
+    pub x: f32,
+    pub speed: f32,
+}
+
+pub struct CrabRow {
+    pub y: u16,
+    pub crabs: Vec<Crab>,
+}
+
+pub struct CrabAnimation {
+    pub active: bool,
+    pub start_time: std::time::Instant,
+    pub rows: Vec<CrabRow>,
+    pub term_width: u16,
+}
+
+impl CrabAnimation {
+    pub fn new(term_width: u16, term_height: u16) -> Self {
+        let num_rows = 6.min((term_height as usize).saturating_sub(2));
+        let row_spacing = if num_rows > 0 {
+            (term_height as usize) / (num_rows + 1)
+        } else {
+            4
+        };
+
+        // Deterministic (no rand dep) speeds and counts for variety.
+        let base_speeds: [f32; 6] = [15.0, 20.0, 10.0, 25.0, 12.0, 18.0];
+        let crab_counts: [usize; 6] = [4, 5, 3, 5, 4, 3];
+
+        let rows = (0..num_rows)
+            .map(|i| {
+                let y = ((i + 1) * row_spacing) as u16;
+                let n_crabs = crab_counts[i % crab_counts.len()];
+                let spacing = if n_crabs > 1 {
+                    term_width as f32 / n_crabs as f32
+                } else {
+                    0.0
+                };
+                let crabs = (0..n_crabs)
+                    .map(|j| {
+                        // Stagger each row a bit so crabs don't line up in columns.
+                        let x = (j as f32 * spacing + i as f32 * 3.0) % term_width as f32;
+                        let speed = base_speeds[(i + j) % base_speeds.len()];
+                        Crab { x, speed }
+                    })
+                    .collect();
+                CrabRow { y, crabs }
+            })
+            .collect();
+
+        Self {
+            active: true,
+            start_time: std::time::Instant::now(),
+            rows,
+            term_width,
+        }
+    }
+
+    pub fn update(&mut self, dt: f32) {
+        let width = self.term_width as f32;
+        for row in &mut self.rows {
+            for crab in &mut row.crabs {
+                crab.x += crab.speed * dt;
+                if crab.x >= width {
+                    crab.x -= width;
+                }
+            }
+        }
+    }
+
+    pub fn is_expired(&self) -> bool {
+        self.start_time.elapsed().as_secs_f32() >= 3.0
+    }
+}
+
+// --- End crab animation types ---
 
 struct HighlightRequest {
     task_id: ItemId,
@@ -124,6 +204,11 @@ pub struct App {
     highlight_tx: Sender<HighlightRequest>,
     /// Receive completed highlights from the background thread.
     highlight_rx: Receiver<HighlightResult>,
+
+    /// Active crab parade easter egg animation, `None` when inactive.
+    pub crab_animation: Option<CrabAnimation>,
+    /// Tracks progress through the Konami code sequence.
+    pub konami_tracker: KonamiTracker,
 }
 
 impl App {
@@ -195,6 +280,8 @@ impl App {
             highlight_cache: None,
             highlight_tx: hl_work_tx,
             highlight_rx: hl_result_rx,
+            crab_animation: None,
+            konami_tracker: KonamiTracker::new(),
         };
         app.rebuild_dashboard_rows();
         Ok(app)
@@ -950,6 +1037,19 @@ impl App {
             });
         }
     }
+
+    /// Start a new crab parade animation sized to the current terminal.
+    pub fn start_crab_animation(&mut self) {
+        let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
+        self.crab_animation = Some(CrabAnimation::new(width, height));
+    }
+
+    /// Advance the crab animation by `dt` seconds. Does nothing if inactive.
+    pub fn update_crab_animation(&mut self, dt: f32) {
+        if let Some(ref mut anim) = self.crab_animation {
+            anim.update(dt);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1386,5 +1486,29 @@ mod tests {
         assert_eq!(task_rows.len(), 2);
         assert_eq!(task_rows[0], &task_id1);
         assert_eq!(task_rows[1], &task_id2);
+    }
+
+    #[test]
+    fn test_crab_animation_expires_after_3s() {
+        let mut anim = CrabAnimation::new(80, 24);
+        assert!(!anim.is_expired(), "should not be expired immediately");
+        // Backdate the start time to simulate 4 seconds having passed.
+        anim.start_time =
+            std::time::Instant::now() - std::time::Duration::from_secs(4);
+        assert!(anim.is_expired(), "should be expired after 4 seconds");
+    }
+
+    #[test]
+    fn test_crab_animation_crabs_move_on_update() {
+        let mut anim = CrabAnimation::new(80, 24);
+        // Ensure there is at least one row with at least one crab.
+        assert!(!anim.rows.is_empty());
+        assert!(!anim.rows[0].crabs.is_empty());
+        let initial_x = anim.rows[0].crabs[0].x;
+        // Update with a generous dt so movement is detectable.
+        anim.update(1.0);
+        let new_x = anim.rows[0].crabs[0].x;
+        // x should have changed (moved forward or wrapped).
+        assert_ne!(new_x, initial_x, "crab should have moved after update");
     }
 }
