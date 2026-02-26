@@ -6,7 +6,6 @@ use swarmit_core::events::locking::try_append_with_timeout;
 use swarmit_core::events::operations::{Operation, OperationKind};
 use swarmit_core::models::{AgentId, ItemId, Priority, Status};
 use swarmit_core::state::markdown;
-use swarmit_core::state::ProjectState;
 
 use crate::output::{print_json_ok, OutputMode};
 use crate::Cli;
@@ -99,8 +98,9 @@ fn create(args: &EpicCreateArgs, cli: &Cli) -> Result<()> {
     let swarmit = root.join(".swarmit");
     let log_path = swarmit.join("operations.log");
     let lock_path = swarmit.join("operations.lock");
+    let snapshot_path = swarmit.join("state.snap");
 
-    let state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (state, log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     let next_id = ItemId::new(
         &state.config.as_ref().map(|c| c.epic_prefix.clone()).unwrap_or_else(|| "EPIC".to_string()),
         state.epic_seq + 1,
@@ -124,12 +124,15 @@ fn create(args: &EpicCreateArgs, cli: &Cli) -> Result<()> {
     .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let state_dir = swarmit.join("state");
-    let post_state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (post_state, _) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     if let Some(epic) = post_state.epics.get(&next_id) {
         let tasks = post_state.tasks_for_epic(&next_id);
         markdown::materialize_epic(&state_dir, epic, &tasks)
             .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
     }
+
+    let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
+    let _ = swarmit_core::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -145,8 +148,7 @@ fn create(args: &EpicCreateArgs, cli: &Cli) -> Result<()> {
 
 fn list(args: &EpicListArgs, cli: &Cli) -> Result<()> {
     let root = require_project_root(cli)?;
-    let log_path = root.join(".swarmit").join("operations.log");
-    let state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (state, _log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let epics: Vec<_> = if let Some(status_str) = &args.status {
         let status = parse_status(status_str)?;
@@ -196,8 +198,7 @@ fn list(args: &EpicListArgs, cli: &Cli) -> Result<()> {
 
 fn show(args: &EpicShowArgs, cli: &Cli) -> Result<()> {
     let root = require_project_root(cli)?;
-    let log_path = root.join(".swarmit").join("operations.log");
-    let state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (state, _log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let id: ItemId = args.id.parse().map_err(|e: swarmit_core::SwarmitError| anyhow::anyhow!("{}", e))?;
     let epic = state
@@ -257,11 +258,12 @@ fn update(args: &EpicUpdateArgs, cli: &Cli) -> Result<()> {
     let swarmit = root.join(".swarmit");
     let log_path = swarmit.join("operations.log");
     let lock_path = swarmit.join("operations.lock");
+    let snapshot_path = swarmit.join("state.snap");
 
     let id: ItemId = args.id.parse().map_err(|e: swarmit_core::SwarmitError| anyhow::anyhow!("{}", e))?;
 
     // Validate epic exists
-    let state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (state, log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     if !state.epics.contains_key(&id) {
         anyhow::bail!("Epic not found: {}", id);
     }
@@ -304,12 +306,15 @@ fn update(args: &EpicUpdateArgs, cli: &Cli) -> Result<()> {
     }
 
     let state_dir = swarmit.join("state");
-    let post_state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (post_state, _) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     if let Some(epic) = post_state.epics.get(&id) {
         let tasks = post_state.tasks_for_epic(&id);
         markdown::materialize_epic(&state_dir, epic, &tasks)
             .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
     }
+
+    let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
+    let _ = swarmit_core::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -327,10 +332,11 @@ fn delete(args: &EpicDeleteArgs, cli: &Cli) -> Result<()> {
     let swarmit = root.join(".swarmit");
     let log_path = swarmit.join("operations.log");
     let lock_path = swarmit.join("operations.lock");
+    let snapshot_path = swarmit.join("state.snap");
 
     let id: ItemId = args.id.parse().map_err(|e: swarmit_core::SwarmitError| anyhow::anyhow!("{}", e))?;
 
-    let pre_state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (pre_state, log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     let pre_epic = pre_state.epics.get(&id).cloned();
 
     let op = Operation::new(agent, OperationKind::DeleteEpic { id: id.clone() });
@@ -343,6 +349,10 @@ fn delete(args: &EpicDeleteArgs, cli: &Cli) -> Result<()> {
         markdown::remove_epic(&state_dir, epic)
             .map_err(|e| anyhow::anyhow!("Failed to remove markdown: {}", e))?;
     }
+
+    let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
+    let (post_state, _) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let _ = swarmit_core::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {

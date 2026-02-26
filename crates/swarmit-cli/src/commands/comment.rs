@@ -6,7 +6,6 @@ use swarmit_core::events::log::append_operation;
 use swarmit_core::events::locking::try_append_with_timeout;
 use swarmit_core::events::operations::{Operation, OperationKind};
 use swarmit_core::models::{AgentId, ItemId, SwarmitError};
-use swarmit_core::state::ProjectState;
 
 use crate::output::{print_json_ok, OutputMode};
 use crate::Cli;
@@ -57,13 +56,14 @@ fn add(args: &CommentAddArgs, cli: &Cli) -> Result<()> {
     let swarmit = root.join(".swarmit");
     let log_path = swarmit.join("operations.log");
     let lock_path = swarmit.join("operations.lock");
+    let snapshot_path = swarmit.join("state.snap");
 
     let task_id: ItemId = args
         .task_id
         .parse()
         .map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
 
-    let state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (state, log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     if !state.tasks.contains_key(&task_id) {
         anyhow::bail!("Task not found: {}", task_id);
     }
@@ -81,6 +81,10 @@ fn add(args: &CommentAddArgs, cli: &Cli) -> Result<()> {
     try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
+    let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
+    let (post_state, _) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let _ = swarmit_core::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
+
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
         OutputMode::Json => print_json_ok(serde_json::json!({
@@ -95,8 +99,7 @@ fn add(args: &CommentAddArgs, cli: &Cli) -> Result<()> {
 
 fn list(args: &CommentListArgs, cli: &Cli) -> Result<()> {
     let root = require_project_root(cli)?;
-    let log_path = root.join(".swarmit").join("operations.log");
-    let state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (state, _log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let task_id: ItemId = args
         .task_id

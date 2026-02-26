@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::Args;
 
 use swarmit_core::state::markdown;
-use swarmit_core::state::ProjectState;
 
 use crate::output::{print_json_ok, OutputMode};
 use crate::Cli;
@@ -15,10 +14,9 @@ pub struct SyncArgs {}
 pub fn run(_args: &SyncArgs, cli: &Cli) -> Result<()> {
     let root = require_project_root(cli)?;
     let swarmit = root.join(".swarmit");
-    let log_path = swarmit.join("operations.log");
     let state_dir = swarmit.join("state");
 
-    let state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (state, _log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let mut epic_count = 0usize;
     let mut task_count = 0usize;

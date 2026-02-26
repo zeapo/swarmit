@@ -102,9 +102,8 @@ pub struct TaskDoneArgs {
     pub agent: Option<String>,
 }
 
-/// Re-reads post-write state and materializes the task's markdown file.
-fn materialize_task(state_dir: &std::path::Path, log_path: &std::path::Path, task_id: &ItemId) -> Result<()> {
-    let state = ProjectState::from_log(log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+/// Materializes the task's markdown file from the given state.
+fn materialize_task_from_state(state_dir: &std::path::Path, state: &ProjectState, task_id: &ItemId) -> Result<()> {
     if let Some(task) = state.tasks.get(task_id) {
         match &task.epic_id {
             Some(eid) => {
@@ -142,8 +141,9 @@ fn create(args: &TaskCreateArgs, cli: &Cli) -> Result<()> {
     let swarmit = root.join(".swarmit");
     let log_path = swarmit.join("operations.log");
     let lock_path = swarmit.join("operations.lock");
+    let snapshot_path = swarmit.join("state.snap");
 
-    let state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (state, log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     let next_id = ItemId::new(
         &state.config.as_ref().map(|c| c.task_prefix.clone()).unwrap_or_else(|| "TASK".to_string()),
         state.task_seq + 1,
@@ -177,8 +177,12 @@ fn create(args: &TaskCreateArgs, cli: &Cli) -> Result<()> {
     try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
+    let (post_state, _) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     let state_dir = swarmit.join("state");
-    materialize_task(&state_dir, &log_path, &next_id)?;
+    materialize_task_from_state(&state_dir, &post_state, &next_id)?;
+
+    let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
+    let _ = swarmit_core::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -194,8 +198,7 @@ fn create(args: &TaskCreateArgs, cli: &Cli) -> Result<()> {
 
 fn list(args: &TaskListArgs, cli: &Cli) -> Result<()> {
     let root = require_project_root(cli)?;
-    let log_path = root.join(".swarmit").join("operations.log");
-    let state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (state, _log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let status_filter = args.status.as_deref().map(parse_status).transpose()?;
     let epic_filter = args
@@ -267,8 +270,7 @@ fn list(args: &TaskListArgs, cli: &Cli) -> Result<()> {
 
 fn show(args: &TaskShowArgs, cli: &Cli) -> Result<()> {
     let root = require_project_root(cli)?;
-    let log_path = root.join(".swarmit").join("operations.log");
-    let state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (state, _log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let id: ItemId = args.id.parse().map_err(|e: swarmit_core::SwarmitError| anyhow::anyhow!("{}", e))?;
     let task = state
@@ -354,10 +356,11 @@ fn update(args: &TaskUpdateArgs, cli: &Cli) -> Result<()> {
     let swarmit = root.join(".swarmit");
     let log_path = swarmit.join("operations.log");
     let lock_path = swarmit.join("operations.lock");
+    let snapshot_path = swarmit.join("state.snap");
 
     let id: ItemId = args.id.parse().map_err(|e: swarmit_core::SwarmitError| anyhow::anyhow!("{}", e))?;
 
-    let state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (state, log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     if !state.tasks.contains_key(&id) {
         anyhow::bail!("Task not found: {}", id);
     }
@@ -406,8 +409,8 @@ fn update(args: &TaskUpdateArgs, cli: &Cli) -> Result<()> {
     })
     .map_err(|e| anyhow::anyhow!("{}", e))?;
 
+    let (post_state, _) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     let state_dir = swarmit.join("state");
-    let post_state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
     let post_epic_id = post_state.tasks.get(&id).and_then(|t| t.epic_id.clone());
     // If task moved epics, clean up the stale file in the old epic directory
     if pre_epic_id != post_epic_id {
@@ -422,7 +425,10 @@ fn update(args: &TaskUpdateArgs, cli: &Cli) -> Result<()> {
             }
         }
     }
-    materialize_task(&state_dir, &log_path, &id)?;
+    materialize_task_from_state(&state_dir, &post_state, &id)?;
+
+    let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
+    let _ = swarmit_core::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -440,10 +446,11 @@ fn delete(args: &TaskDeleteArgs, cli: &Cli) -> Result<()> {
     let swarmit = root.join(".swarmit");
     let log_path = swarmit.join("operations.log");
     let lock_path = swarmit.join("operations.lock");
+    let snapshot_path = swarmit.join("state.snap");
 
     let id: ItemId = args.id.parse().map_err(|e: swarmit_core::SwarmitError| anyhow::anyhow!("{}", e))?;
 
-    let pre_state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (pre_state, log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     let pre_epic = pre_state
         .tasks
         .get(&id)
@@ -459,6 +466,10 @@ fn delete(args: &TaskDeleteArgs, cli: &Cli) -> Result<()> {
     let state_dir = swarmit.join("state");
     markdown::remove_task_file(&state_dir, &id, pre_epic.as_ref())
         .map_err(|e| anyhow::anyhow!("Failed to remove markdown: {}", e))?;
+
+    let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
+    let (post_state, _) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let _ = swarmit_core::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -476,6 +487,9 @@ fn claim(args: &TaskClaimArgs, cli: &Cli) -> Result<()> {
     let swarmit = root.join(".swarmit");
     let log_path = swarmit.join("operations.log");
     let lock_path = swarmit.join("operations.lock");
+    let snapshot_path = swarmit.join("state.snap");
+
+    let (_, log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let id: ItemId = args.id.parse().map_err(|e: swarmit_core::SwarmitError| anyhow::anyhow!("{}", e))?;
     let op = Operation::new(agent, OperationKind::ClaimTask { id: id.clone() });
@@ -483,8 +497,12 @@ fn claim(args: &TaskClaimArgs, cli: &Cli) -> Result<()> {
     try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
+    let (post_state, _) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     let state_dir = swarmit.join("state");
-    materialize_task(&state_dir, &log_path, &id)?;
+    materialize_task_from_state(&state_dir, &post_state, &id)?;
+
+    let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
+    let _ = swarmit_core::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -502,6 +520,9 @@ fn done(args: &TaskDoneArgs, cli: &Cli) -> Result<()> {
     let swarmit = root.join(".swarmit");
     let log_path = swarmit.join("operations.log");
     let lock_path = swarmit.join("operations.lock");
+    let snapshot_path = swarmit.join("state.snap");
+
+    let (_, log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let id: ItemId = args.id.parse().map_err(|e: swarmit_core::SwarmitError| anyhow::anyhow!("{}", e))?;
     let op = Operation::new(agent, OperationKind::CompleteTask { id: id.clone() });
@@ -509,8 +530,12 @@ fn done(args: &TaskDoneArgs, cli: &Cli) -> Result<()> {
     try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
+    let (post_state, _) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     let state_dir = swarmit.join("state");
-    materialize_task(&state_dir, &log_path, &id)?;
+    materialize_task_from_state(&state_dir, &post_state, &id)?;
+
+    let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
+    let _ = swarmit_core::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {

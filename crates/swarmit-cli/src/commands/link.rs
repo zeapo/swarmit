@@ -74,6 +74,7 @@ fn add(args: &LinkAddArgs, cli: &Cli) -> Result<()> {
     let swarmit = root.join(".swarmit");
     let log_path = swarmit.join("operations.log");
     let lock_path = swarmit.join("operations.lock");
+    let snapshot_path = swarmit.join("state.snap");
 
     let from: ItemId = args.from.parse().map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
     let to: ItemId = args.to.parse().map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
@@ -86,7 +87,7 @@ fn add(args: &LinkAddArgs, cli: &Cli) -> Result<()> {
     let rel_type = parse_rel_type(&args.r#type)?;
 
     // Validate targets exist
-    let state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (state, log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     validate_item_exists(&state, &from)?;
     validate_item_exists(&state, &to)?;
 
@@ -130,6 +131,10 @@ fn add(args: &LinkAddArgs, cli: &Cli) -> Result<()> {
     })
     .map_err(|e| anyhow::anyhow!("{}", e))?;
 
+    let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
+    let (post_state, _) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let _ = swarmit_core::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
+
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
         OutputMode::Json => print_json_ok(serde_json::json!({
@@ -150,6 +155,7 @@ fn remove(args: &LinkRemoveArgs, cli: &Cli) -> Result<()> {
     let swarmit = root.join(".swarmit");
     let log_path = swarmit.join("operations.log");
     let lock_path = swarmit.join("operations.lock");
+    let snapshot_path = swarmit.join("state.snap");
 
     let from: ItemId = args.from.parse().map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
     let to: ItemId = args.to.parse().map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
@@ -183,6 +189,11 @@ fn remove(args: &LinkRemoveArgs, cli: &Cli) -> Result<()> {
     })
     .map_err(|e| anyhow::anyhow!("{}", e))?;
 
+    let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
+    let (post_state, _) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    // Use log_offset = 0 as conservative fallback since we didn't load state before writing
+    let _ = swarmit_core::check_and_write_snapshot(&log_path, &snapshot_path, log_len, 0, &post_state);
+
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
         OutputMode::Json => print_json_ok(serde_json::json!({ "removed": true })),
@@ -194,8 +205,7 @@ fn remove(args: &LinkRemoveArgs, cli: &Cli) -> Result<()> {
 
 fn list(args: &LinkListArgs, cli: &Cli) -> Result<()> {
     let root = require_project_root(cli)?;
-    let log_path = root.join(".swarmit").join("operations.log");
-    let state = ProjectState::from_log(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (state, _log_offset) = swarmit_core::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let id: ItemId = args.id.parse().map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
     let rels = state.relationships_for(&id);

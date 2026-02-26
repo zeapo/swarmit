@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Args;
 
-use swarmit_core::state::{read_snapshot, write_snapshot, ProjectState, SnapshotV1};
+use swarmit_core::state::{read_snapshot, write_snapshot, SnapshotV1};
 
 use crate::output::{print_json_ok, OutputMode};
 use crate::Cli;
@@ -27,8 +27,8 @@ pub fn run(args: &CompactArgs, cli: &Cli) -> Result<()> {
         .map(|m| m.len())
         .unwrap_or(0);
 
-    // Replay the full log to get current state
-    let state = ProjectState::from_log(&log_path)
+    // Load current state (uses snapshot + oplog tail for efficiency)
+    let (state, _log_offset) = swarmit_core::load_state(&root)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Write snapshot at current log end offset
