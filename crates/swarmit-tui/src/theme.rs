@@ -134,6 +134,12 @@ impl Theme {
         Style::default().fg(self.primary())
     }
 
+    pub fn focused_border_style(&self) -> Style {
+        Style::default()
+            .fg(self.primary())
+            .add_modifier(Modifier::BOLD)
+    }
+
     pub fn focus_style(&self) -> Style {
         Style::default()
             .fg(self.warning())

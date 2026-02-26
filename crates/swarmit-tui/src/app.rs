@@ -13,7 +13,7 @@ use swarmit_core::models::{AgentId, ItemId, Priority, Status};
 use swarmit_core::state::ProjectState;
 
 use crate::components::tree_list::DashboardRow;
-use crate::events::{Action, Modal, Screen, TaskFormField};
+use crate::events::{Action, Focus, Modal, Screen, TaskFormField};
 use crate::theme::Theme;
 
 /// Sort order for the dashboard.
@@ -93,8 +93,14 @@ pub struct App {
     // Cached flattened tree rows (rebuilt on state changes).
     pub dashboard_rows: Vec<DashboardRow>,
 
-    /// Whether the bottom detail pane is currently visible.
+    /// Whether the side detail pane is currently visible.
     pub detail_open: bool,
+
+    /// Which pane currently has keyboard focus.
+    pub focus: Focus,
+
+    /// Vertical scroll offset for the detail pane.
+    pub detail_scroll: usize,
 }
 
 impl App {
@@ -140,6 +146,8 @@ impl App {
             dashboard_sort: SortOption::default(),
             dashboard_rows: Vec::new(),
             detail_open: false,
+            focus: Focus::default(),
+            detail_scroll: 0,
         };
         app.rebuild_dashboard_rows();
         Ok(app)
@@ -168,15 +176,53 @@ impl App {
             Action::Back => {
                 if self.detail_open {
                     self.detail_open = false;
+                    self.focus = Focus::List;
+                    self.detail_scroll = 0;
                 } else if matches!(self.screen, Screen::Help) {
                     self.screen = Screen::Main;
                 } else {
                     self.modal = Some(Modal::QuitConfirm);
                 }
             }
-            Action::Up => self.move_up(),
-            Action::Down => self.move_down(),
-            Action::ToggleDetailPane => self.toggle_detail_pane(),
+            Action::Up => {
+                if self.focus == Focus::Detail {
+                    self.detail_scroll = self.detail_scroll.saturating_sub(1);
+                } else {
+                    self.move_up();
+                    if self.detail_open {
+                        self.detail_scroll = 0;
+                    }
+                }
+            }
+            Action::Down => {
+                if self.focus == Focus::Detail {
+                    self.detail_scroll += 1;
+                } else {
+                    self.move_down();
+                    if self.detail_open {
+                        self.detail_scroll = 0;
+                    }
+                }
+            }
+            Action::FocusRight => {
+                if self.dashboard_rows.is_empty() {
+                    return;
+                }
+                if !self.detail_open {
+                    self.detail_open = true;
+                }
+                self.focus = Focus::Detail;
+                self.detail_scroll = 0;
+            }
+            Action::FocusLeft => {
+                if self.focus == Focus::Detail {
+                    self.focus = Focus::List;
+                } else if self.detail_open {
+                    self.detail_open = false;
+                    self.focus = Focus::List;
+                    self.detail_scroll = 0;
+                }
+            }
             Action::Help => {
                 self.screen = Screen::Help;
             }
@@ -190,18 +236,6 @@ impl App {
                     } else {
                         self.collapsed_epics.insert(eid);
                     }
-                    self.rebuild_dashboard_rows();
-                }
-            }
-            Action::CollapseEpic => {
-                if let Some(eid) = self.epic_id_at_selection() {
-                    self.collapsed_epics.insert(eid);
-                    self.rebuild_dashboard_rows();
-                }
-            }
-            Action::ExpandEpic => {
-                if let Some(eid) = self.epic_id_at_selection() {
-                    self.collapsed_epics.remove(&eid);
                     self.rebuild_dashboard_rows();
                 }
             }
@@ -622,11 +656,6 @@ impl App {
         }
     }
 
-    /// Toggle the detail pane open/closed.
-    fn toggle_detail_pane(&mut self) {
-        self.detail_open = !self.detail_open;
-    }
-
     /// Rebuild the flat `dashboard_rows` cache from current state.
     ///
     /// Structure: orphan tasks first (no epic), then epics with their tasks.
@@ -767,6 +796,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::Focus;
     use crate::theme::Theme;
     use swarmit_core::events::operations::{Operation, OperationKind};
     use swarmit_core::models::{AgentId, Priority, Status};
@@ -901,14 +931,14 @@ mod tests {
     }
 
     #[test]
-    fn collapse_epic_hides_child_tasks() {
+    fn toggle_collapse_hides_epic_child_tasks() {
         let (mut app, epic_id, _task_id) = setup_app_with_epic();
 
         // Initially expanded — epic row + task row = 2 rows
         assert_eq!(app.dashboard_rows.len(), 2);
         assert!(!app.collapsed_epics.contains(&epic_id));
 
-        app.handle_action(Action::CollapseEpic);
+        app.handle_action(Action::ToggleCollapse);
 
         assert!(app.collapsed_epics.contains(&epic_id));
         // Collapsed — only the epic header row remains
@@ -917,7 +947,7 @@ mod tests {
     }
 
     #[test]
-    fn expand_epic_shows_child_tasks() {
+    fn toggle_collapse_expands_collapsed_epic() {
         let (mut app, epic_id, task_id) = setup_app_with_epic();
 
         // Pre-collapse the epic
@@ -925,7 +955,7 @@ mod tests {
         app.rebuild_dashboard_rows();
         assert_eq!(app.dashboard_rows.len(), 1);
 
-        app.handle_action(Action::ExpandEpic);
+        app.handle_action(Action::ToggleCollapse);
 
         assert!(!app.collapsed_epics.contains(&epic_id));
         assert_eq!(app.dashboard_rows.len(), 2);
@@ -933,37 +963,28 @@ mod tests {
     }
 
     #[test]
-    fn collapse_epic_is_idempotent() {
+    fn toggle_collapse_cycles_epic_state() {
         let (mut app, epic_id, _) = setup_app_with_epic();
 
-        app.handle_action(Action::CollapseEpic);
-        app.handle_action(Action::CollapseEpic);
-
-        // Still collapsed — second call is a no-op on the set
+        // First toggle: expanded → collapsed
+        app.handle_action(Action::ToggleCollapse);
         assert!(app.collapsed_epics.contains(&epic_id));
         assert_eq!(app.dashboard_rows.len(), 1);
-    }
 
-    #[test]
-    fn expand_epic_is_idempotent() {
-        let (mut app, epic_id, _) = setup_app_with_epic();
-
-        // Already expanded; calling ExpandEpic twice should be harmless
-        app.handle_action(Action::ExpandEpic);
-        app.handle_action(Action::ExpandEpic);
-
+        // Second toggle: collapsed → expanded
+        app.handle_action(Action::ToggleCollapse);
         assert!(!app.collapsed_epics.contains(&epic_id));
         assert_eq!(app.dashboard_rows.len(), 2);
     }
 
     #[test]
-    fn collapse_expand_from_task_row_uses_parent_epic() {
+    fn toggle_collapse_from_task_row_uses_parent_epic() {
         let (mut app, epic_id, _task_id) = setup_app_with_epic();
 
         // Select the task row (index 1) instead of the epic row
         app.selected_index = 1;
 
-        app.handle_action(Action::CollapseEpic);
+        app.handle_action(Action::ToggleCollapse);
 
         assert!(app.collapsed_epics.contains(&epic_id));
         assert_eq!(app.dashboard_rows.len(), 1);
@@ -1011,17 +1032,83 @@ mod tests {
     }
 
     #[test]
-    fn toggle_detail_pane_opens_and_closes() {
+    fn focus_right_opens_detail_and_sets_focus_detail() {
+        let (mut app, _, _) = setup_app_with_epic();
+
+        assert!(!app.detail_open);
+        assert_eq!(app.focus, Focus::List);
+
+        app.handle_action(Action::FocusRight);
+
+        assert!(app.detail_open);
+        assert_eq!(app.focus, Focus::Detail);
+        assert_eq!(app.detail_scroll, 0);
+    }
+
+    #[test]
+    fn focus_right_noop_on_empty_list() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
 
+        assert!(app.dashboard_rows.is_empty());
+        app.handle_action(Action::FocusRight);
         assert!(!app.detail_open);
+        assert_eq!(app.focus, Focus::List);
+    }
 
-        app.handle_action(Action::ToggleDetailPane);
-        assert!(app.detail_open);
+    #[test]
+    fn focus_left_returns_focus_to_list() {
+        let (mut app, _, _) = setup_app_with_epic();
 
-        app.handle_action(Action::ToggleDetailPane);
-        assert!(!app.detail_open);
+        app.detail_open = true;
+        app.focus = Focus::Detail;
+
+        app.handle_action(Action::FocusLeft);
+
+        assert!(app.detail_open, "panel stays open after FocusLeft");
+        assert_eq!(app.focus, Focus::List);
+    }
+
+    #[test]
+    fn focus_left_closes_pane_when_already_on_list() {
+        let (mut app, _, _) = setup_app_with_epic();
+
+        app.detail_open = true;
+        app.focus = Focus::List;
+        app.detail_scroll = 2;
+
+        app.handle_action(Action::FocusLeft);
+
+        assert!(!app.detail_open, "second h closes the pane");
+        assert_eq!(app.focus, Focus::List);
+        assert_eq!(app.detail_scroll, 0);
+    }
+
+    #[test]
+    fn up_down_scroll_when_detail_focused() {
+        let (mut app, _, _) = setup_app_with_epic();
+
+        app.detail_open = true;
+        app.focus = Focus::Detail;
+        app.detail_scroll = 5;
+
+        app.handle_action(Action::Up);
+        assert_eq!(app.detail_scroll, 4);
+
+        app.handle_action(Action::Down);
+        assert_eq!(app.detail_scroll, 5);
+    }
+
+    #[test]
+    fn scroll_saturates_at_zero() {
+        let (mut app, _, _) = setup_app_with_epic();
+
+        app.detail_open = true;
+        app.focus = Focus::Detail;
+        app.detail_scroll = 0;
+
+        app.handle_action(Action::Up);
+        assert_eq!(app.detail_scroll, 0, "scroll should not underflow");
     }
 
     #[test]
@@ -1030,10 +1117,40 @@ mod tests {
         let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
 
         app.detail_open = true;
+        app.focus = Focus::Detail;
+        app.detail_scroll = 3;
+
         app.handle_action(Action::Back);
 
         assert!(!app.detail_open);
+        assert_eq!(app.focus, Focus::List, "focus resets to List on close");
+        assert_eq!(app.detail_scroll, 0, "scroll resets on close");
         assert!(app.modal.is_none());
+    }
+
+    #[test]
+    fn back_invariant_focus_always_list_when_detail_closed() {
+        let (mut app, _, _) = setup_app_with_epic();
+
+        // Open via FocusRight, then close via Back
+        app.handle_action(Action::FocusRight);
+        assert_eq!(app.focus, Focus::Detail);
+
+        app.handle_action(Action::Back);
+        assert!(!app.detail_open);
+        assert_eq!(app.focus, Focus::List, "invariant: focus==List when detail closed");
+    }
+
+    #[test]
+    fn list_navigation_resets_scroll_when_detail_open() {
+        let (mut app, _, _) = setup_app_with_epic();
+
+        app.detail_open = true;
+        app.focus = Focus::List;
+        app.detail_scroll = 10;
+
+        app.handle_action(Action::Down);
+        assert_eq!(app.detail_scroll, 0, "navigation resets detail scroll");
     }
 
     #[test]

@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::events::{Modal, Screen, TaskFormField};
+use crate::events::{Focus, Modal, Screen, TaskFormField};
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
@@ -34,14 +34,14 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                     Some(s) => format!("{}", s),
                 };
                 let sort_label = app.dashboard_sort.label();
-                (
-                    format!("[{}] [{}]", filter_label, sort_label),
-                    if app.detail_open {
-                        "j/k:move  Enter:close detail  Space:expand  f:filter  s:sort  n:new  ?:help  q:quit"
-                    } else {
-                        "j/k:move  Enter:open detail  Space:expand  f:filter  s:sort  n:new  ?:help  q:quit"
-                    },
-                )
+                let hints = if !app.detail_open {
+                    "j/k:move  l:detail  Space:expand  f:filter  s:sort  n:new  ?:help  q:quit"
+                } else if app.focus == Focus::Detail {
+                    "j/k:scroll  h:back to list  Esc:close  ?:help  q:quit"
+                } else {
+                    "j/k:move  l:focus detail  h/Esc:close  Space:expand  f:filter  s:sort  n:new  ?:help  q:quit"
+                };
+                (format!("[{}] [{}]", filter_label, sort_label), hints)
             }
             Screen::Help => ("Help".to_string(), "Esc/?:close"),
         }

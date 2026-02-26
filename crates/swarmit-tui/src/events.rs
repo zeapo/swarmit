@@ -5,12 +5,21 @@ pub enum Screen {
     Help,
 }
 
+/// Which pane currently has keyboard focus.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Focus {
+    #[default]
+    List,
+    Detail,
+}
+
 /// User input actions, decoupled from raw key events.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Up,
     Down,
-    ToggleDetailPane,
+    FocusRight,
+    FocusLeft,
     Back,
     Quit,
     QuitRequest,
@@ -19,8 +28,6 @@ pub enum Action {
     Search,
     Refresh,
     ToggleCollapse,
-    CollapseEpic,
-    ExpandEpic,
     OpenFilterDialog,
     FilterDialogMove(i8),
     FilterDialogConfirm,

@@ -10,6 +10,7 @@ use swarmit_core::models::ItemId;
 
 use crate::app::App;
 use crate::components::tree_list::DashboardRow;
+use crate::events::Focus;
 
 /// Renders the 1-row context breadcrumb above the detail pane.
 /// Shows the path to the selected item: "EPIC-001 › TASK-003 · Title" or "EPIC-001 · Title".
@@ -48,11 +49,16 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
 
     match selected {
         None => {
+            let border = if app.focus == Focus::Detail {
+                theme.focused_border_style()
+            } else {
+                theme.border_style()
+            };
             let msg = Paragraph::new(Span::styled("No item selected.", theme.muted_style()))
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .border_style(theme.border_style()),
+                        .border_style(border),
                 );
             f.render_widget(msg, area);
         }
@@ -63,6 +69,11 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
 
 fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
     let theme = &app.theme;
+    let border = if app.focus == Focus::Detail {
+        theme.focused_border_style()
+    } else {
+        theme.border_style()
+    };
 
     let Some(task) = app.state.tasks.get(task_id) else {
         let msg = Paragraph::new("Task not found").style(theme.muted_style());
@@ -138,63 +149,32 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(Span::styled(format!(" {} ", task.id), theme.title_style()))
-                .border_style(theme.border_style()),
+                .border_style(border),
         )
         .wrap(Wrap { trim: true });
     f.render_widget(meta, chunks[0]);
 
-    // ── Description + Comments ───────────────────────────────────────────
-    let body = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-        .split(chunks[1]);
-
+    // ── Description (full width, scrollable) ─────────────────────────────
     let desc_text = task.description.as_deref().unwrap_or("No description.");
     let desc = Paragraph::new(desc_text)
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .title(Span::styled(" Description ", theme.title_style()))
-                .border_style(theme.border_style()),
+                .border_style(border),
         )
-        .wrap(Wrap { trim: false });
-    f.render_widget(desc, body[0]);
-
-    let comments = app.state.comments_for(task_id);
-    let comment_lines: Vec<Line> = if comments.is_empty() {
-        vec![Line::from(Span::styled("No comments.", theme.muted_style()))]
-    } else {
-        comments
-            .iter()
-            .flat_map(|c| {
-                vec![
-                    Line::from(Span::styled(
-                        format!(" @{}  {}", c.author, c.created_at.format("%Y-%m-%d %H:%M")),
-                        Style::default().fg(theme.primary()),
-                    )),
-                    Line::from(format!("  {}", c.body)),
-                    Line::from(""),
-                ]
-            })
-            .collect()
-    };
-
-    let comments_widget = Paragraph::new(comment_lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled(
-                    format!(" Comments ({}) ", comments.len()),
-                    theme.title_style(),
-                ))
-                .border_style(theme.border_style()),
-        )
-        .wrap(Wrap { trim: false });
-    f.render_widget(comments_widget, body[1]);
+        .wrap(Wrap { trim: false })
+        .scroll((app.detail_scroll as u16, 0));
+    f.render_widget(desc, chunks[1]);
 }
 
 fn render_epic(f: &mut Frame, app: &App, area: Rect, epic_id: &ItemId) {
     let theme = &app.theme;
+    let border = if app.focus == Focus::Detail {
+        theme.focused_border_style()
+    } else {
+        theme.border_style()
+    };
 
     let Some(epic) = app.state.epics.get(epic_id) else {
         let msg = Paragraph::new("Epic not found").style(theme.muted_style());
@@ -251,12 +231,12 @@ fn render_epic(f: &mut Frame, app: &App, area: Rect, epic_id: &ItemId) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(Span::styled(format!(" {} ", epic.id), theme.title_style()))
-                .border_style(theme.border_style()),
+                .border_style(border),
         )
         .wrap(Wrap { trim: true });
     f.render_widget(meta, chunks[0]);
 
-    // ── Task list ────────────────────────────────────────────────────────
+    // ── Task list (scrollable) ────────────────────────────────────────────
     let task_lines: Vec<Line> = if epic.task_ids.is_empty() {
         vec![Line::from(Span::styled("No tasks.", theme.muted_style()))]
     } else {
@@ -287,8 +267,9 @@ fn render_epic(f: &mut Frame, app: &App, area: Rect, epic_id: &ItemId) {
                     format!(" Tasks ({}) ", epic.task_ids.len()),
                     theme.title_style(),
                 ))
-                .border_style(theme.border_style()),
+                .border_style(border),
         )
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((app.detail_scroll as u16, 0));
     f.render_widget(tasks_widget, chunks[1]);
 }

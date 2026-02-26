@@ -78,20 +78,20 @@ fn run_loop(
             match &app.screen {
                 Screen::Main => {
                     if app.detail_open {
-                        let split = Layout::vertical([
-                            Constraint::Percentage(50),
-                            Constraint::Percentage(50),
+                        let split = Layout::horizontal([
+                            Constraint::Length(30),
+                            Constraint::Min(40),
                         ])
                         .split(main_area);
                         components::tree_list::render(f, app, split[0]);
-                        // Bottom half: 1-row breadcrumb + detail pane content
-                        let bottom = Layout::vertical([
+                        // Right side: 1-row breadcrumb + detail pane content
+                        let right = Layout::vertical([
                             Constraint::Length(1),
                             Constraint::Min(0),
                         ])
                         .split(split[1]);
-                        components::detail_pane::render_breadcrumb(f, app, bottom[0]);
-                        components::detail_pane::render(f, app, bottom[1]);
+                        components::detail_pane::render_breadcrumb(f, app, right[0]);
+                        components::detail_pane::render(f, app, right[1]);
                     } else {
                         components::tree_list::render(f, app, main_area);
                     }
@@ -152,10 +152,9 @@ fn key_to_action(code: KeyCode, _modifiers: KeyModifiers) -> Action {
         KeyCode::Char('n') => Action::NewTask,
         KeyCode::Char('j') | KeyCode::Down => Action::Down,
         KeyCode::Char('k') | KeyCode::Up => Action::Up,
-        KeyCode::Enter => Action::ToggleDetailPane,
+        KeyCode::Enter | KeyCode::Char('l') => Action::FocusRight,
         KeyCode::Char(' ') => Action::ToggleCollapse,
-        KeyCode::Char('h') => Action::CollapseEpic,
-        KeyCode::Char('l') => Action::ExpandEpic,
+        KeyCode::Char('h') => Action::FocusLeft,
         KeyCode::Char('f') => Action::OpenFilterDialog,
         KeyCode::Char('s') => Action::OpenSortDialog,
         KeyCode::Esc => Action::Back,
