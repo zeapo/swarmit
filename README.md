@@ -1,8 +1,10 @@
 # Swarmit
 
+![Swarmit demo](docs/demo.webp)
+
 **Persistent task coordination for AI coding agents.**
 
-AI coding agents are powerful — but they forget everything when a session ends. Built-in todo lists are invisible to other agents and vanish on exit. Swarmit gives agents a shared, persistent task board they can plan against across sessions and collaborate through in real time.
+AI coding agents try to maintain context through markdown plans and limited subagent memory — but those are fragile, siloed, and invisible to other agents. Swarmit replaces that with a shared, persistent task board every agent reads and writes through the same CLI. One source of truth across sessions and agents.
 
 Break a project into epics and tasks, set up dependency graphs, then let multiple agents pick up work in parallel — each one aware of what the others are doing. Come back tomorrow and the plan is still there, with full history of who did what.
 
