@@ -105,6 +105,15 @@ pub enum OperationKind {
         body: String,
     },
 
+    // ── Insights ─────────────────────────────────────────────────────────
+    AddInsight {
+        id: Uuid,
+        task_id: ItemId,
+        file_path: String,
+        before_snippet: Option<String>,
+        after_snippet: Option<String>,
+        body: String,
+    },
 }
 
 impl Operation {

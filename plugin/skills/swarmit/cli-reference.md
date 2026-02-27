@@ -95,6 +95,38 @@ swarmit comment list <TASK-ID>
 
 ---
 
+## swarmit insight
+
+```
+swarmit insight add <TASK-ID> --file <PATH> --body <TEXT>
+                    [--before <SNIPPET>] [--after <SNIPPET>]
+                    --agent <ID>
+
+swarmit insight list <TASK-ID>
+```
+
+Structured code-change records: one insight per file changed. `--before` and `--after` are optional snippets showing the code before/after the change. `--body` is the reasoning.
+
+**Examples:**
+```bash
+# Full insight with before/after
+swarmit insight add TASK-007 --file src/auth.rs \
+  --before "fn login() { todo!() }" \
+  --after "fn login() -> Result<Token> { ... }" \
+  --body "Implemented OAuth login" --agent me
+
+# Insight for a new file (no --before)
+swarmit insight add TASK-007 --file src/auth/oauth.rs \
+  --after "pub struct OAuthClient { ... }" \
+  --body "Added new OAuth client module" --agent me
+
+# Minimal insight (reasoning only)
+swarmit insight add TASK-007 --file Cargo.toml \
+  --body "Added oauth2 dependency" --agent me
+```
+
+---
+
 ## swarmit log
 
 ```

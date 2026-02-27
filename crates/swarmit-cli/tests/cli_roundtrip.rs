@@ -231,6 +231,66 @@ fn relationship_inverse_created() {
     assert!(t2_rels.iter().any(|r| r.rel_type == swarmit_core::models::RelationType::BlockedBy));
 }
 
+/// Insight round-trip: create task → add insight → verify fields
+#[test]
+fn insight_roundtrip() {
+    let dir = TempDir::new().unwrap();
+    let (log, lock) = setup_project(&dir);
+
+    let task_id: ItemId = "TASK-001".parse().unwrap();
+
+    // Create task
+    try_append_with_timeout(&lock, || {
+        append_operation(
+            &log,
+            &Operation::new(
+                agent(),
+                OperationKind::CreateTask {
+                    id: task_id.clone(),
+                    title: "Refactor auth".to_string(),
+                    description: None,
+                    priority: Priority::Medium,
+                    epic_id: None,
+                },
+            ),
+        )
+    })
+    .unwrap();
+
+    // Add insight
+    let insight_id = uuid::Uuid::now_v7();
+    try_append_with_timeout(&lock, || {
+        append_operation(
+            &log,
+            &Operation::new(
+                agent(),
+                OperationKind::AddInsight {
+                    id: insight_id,
+                    task_id: task_id.clone(),
+                    file_path: "src/auth.rs".to_string(),
+                    before_snippet: Some("fn old_login()".to_string()),
+                    after_snippet: Some("fn login() -> Result<()>".to_string()),
+                    body: "Improved error handling".to_string(),
+                },
+            ),
+        )
+    })
+    .unwrap();
+
+    let state = ProjectState::from_log(&log).unwrap();
+    let insights = state.insights_for(&task_id);
+    assert_eq!(insights.len(), 1);
+    assert_eq!(insights[0].id, insight_id);
+    assert_eq!(insights[0].file_path, "src/auth.rs");
+    assert_eq!(insights[0].before_snippet.as_deref(), Some("fn old_login()"));
+    assert_eq!(
+        insights[0].after_snippet.as_deref(),
+        Some("fn login() -> Result<()>")
+    );
+    assert_eq!(insights[0].body, "Improved error handling");
+    assert_eq!(insights[0].author, agent());
+}
+
 /// Self-links are rejected.
 #[test]
 fn self_link_rejected() {

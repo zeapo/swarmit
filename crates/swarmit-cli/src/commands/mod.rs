@@ -2,6 +2,7 @@ pub mod comment;
 pub mod compact;
 pub mod epic;
 pub mod init;
+pub mod insight;
 pub mod link;
 pub mod log;
 pub mod project;

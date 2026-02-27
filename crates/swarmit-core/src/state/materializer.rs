@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::events::log::read_operations;
 use crate::events::operations::{Operation, OperationKind};
 use crate::models::{
-    AgentId, Comment, Epic, ItemId, ProjectConfig, Relationship, Result,
-    Status, SwarmitError, Task,
+    AgentId, Comment, Epic, Insight, ItemId, ProjectConfig, Relationship, Result, Status,
+    SwarmitError, Task,
 };
 
 /// Full in-memory projection of all project state.
@@ -18,6 +18,7 @@ pub struct ProjectState {
     pub tasks: BTreeMap<ItemId, Task>,
     pub relationships: Vec<Relationship>,
     pub comments: BTreeMap<ItemId, Vec<Comment>>,
+    pub insights: BTreeMap<ItemId, Vec<Insight>>,
     /// Next sequence number for epic IDs.
     pub epic_seq: u32,
     /// Next sequence number for task IDs.
@@ -322,6 +323,29 @@ impl ProjectState {
                     .push(comment);
             }
 
+            OperationKind::AddInsight {
+                id,
+                task_id,
+                file_path,
+                before_snippet,
+                after_snippet,
+                body,
+            } => {
+                let insight = Insight {
+                    id,
+                    task_id: task_id.clone(),
+                    author: op.agent,
+                    file_path,
+                    before_snippet,
+                    after_snippet,
+                    body,
+                    created_at: op.timestamp,
+                };
+                self.insights
+                    .entry(task_id)
+                    .or_default()
+                    .push(insight);
+            }
         }
 
         Ok(())
@@ -360,6 +384,14 @@ impl ProjectState {
         self.comments
             .get(task_id)
             .map(|cs| cs.iter().collect())
+            .unwrap_or_default()
+    }
+
+    /// Returns insights for a task, sorted by UUID (time order).
+    pub fn insights_for(&self, task_id: &ItemId) -> Vec<&Insight> {
+        self.insights
+            .get(task_id)
+            .map(|is| is.iter().collect())
             .unwrap_or_default()
     }
 
@@ -555,6 +587,32 @@ mod tests {
 
         assert_eq!(state.comments_for(&task_id).len(), 1);
         assert_eq!(state.comments_for(&task_id)[0].body, "Great work!");
+    }
+
+    #[test]
+    fn add_insight() {
+        let mut state = ProjectState::new();
+        let task_id: ItemId = "TASK-001".parse().unwrap();
+        let insight_id = uuid::Uuid::now_v7();
+
+        state
+            .apply(op(OperationKind::AddInsight {
+                id: insight_id,
+                task_id: task_id.clone(),
+                file_path: "src/main.rs".to_string(),
+                before_snippet: Some("fn old()".to_string()),
+                after_snippet: Some("fn new()".to_string()),
+                body: "Renamed function for clarity".to_string(),
+            }))
+            .unwrap();
+
+        let insights = state.insights_for(&task_id);
+        assert_eq!(insights.len(), 1);
+        assert_eq!(insights[0].file_path, "src/main.rs");
+        assert_eq!(insights[0].before_snippet.as_deref(), Some("fn old()"));
+        assert_eq!(insights[0].after_snippet.as_deref(), Some("fn new()"));
+        assert_eq!(insights[0].body, "Renamed function for clarity");
+        assert_eq!(insights[0].author, agent());
     }
 
     // ── Auto epic status transition tests ────────────────────────────────

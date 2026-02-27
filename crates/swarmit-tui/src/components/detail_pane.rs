@@ -217,26 +217,35 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
 
     // ── Tab bar ─────────────────────────────────────────────────────────
     let comment_count = app.state.comments_for(task_id).len();
+    let insight_count = app.state.insights_for(task_id).len();
 
-    let (desc_style, comments_style) = match app.detail_tab {
-        DetailTab::Description => (
-            Style::default()
-                .fg(theme.primary())
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-            theme.muted_style(),
-        ),
-        DetailTab::Comments => (
-            theme.muted_style(),
-            Style::default()
-                .fg(theme.primary())
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-        ),
+    let active_style = Style::default()
+        .fg(theme.primary())
+        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+    let inactive_style = theme.muted_style();
+
+    let desc_style = if app.detail_tab == DetailTab::Description {
+        active_style
+    } else {
+        inactive_style
+    };
+    let comments_style = if app.detail_tab == DetailTab::Comments {
+        active_style
+    } else {
+        inactive_style
+    };
+    let insights_style = if app.detail_tab == DetailTab::Insights {
+        active_style
+    } else {
+        inactive_style
     };
 
     let tab_line = Line::from(vec![
         Span::styled(" Description ", desc_style),
         Span::styled(" │ ", theme.muted_style()),
         Span::styled(format!("Comments ({}) ", comment_count), comments_style),
+        Span::styled(" │ ", theme.muted_style()),
+        Span::styled(format!("Insights ({}) ", insight_count), insights_style),
     ]);
     f.render_widget(Paragraph::new(tab_line), chunks[1]);
 
@@ -311,6 +320,83 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
                 .wrap(Wrap { trim: false })
                 .scroll((app.comment_scroll as u16, 0));
             f.render_widget(comments_widget, chunks[2]);
+        }
+        DetailTab::Insights => {
+            let insights = app.state.insights_for(task_id);
+            let content: Text = if insights.is_empty() {
+                Text::from(Line::from(Span::styled(
+                    "No insights.",
+                    theme.muted_style(),
+                )))
+            } else {
+                let mut lines: Vec<Line> = Vec::new();
+                for (i, insight) in insights.iter().enumerate() {
+                    if i > 0 {
+                        lines.push(Line::from(Span::styled(
+                            "───────────────────────────────────",
+                            theme.muted_style(),
+                        )));
+                    }
+                    // Author · timestamp header
+                    let ts = insight.created_at.format("%Y-%m-%d %H:%M");
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!(" {} ", insight.author),
+                            Style::default()
+                                .fg(theme.primary())
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(format!("· {}", ts), theme.muted_style()),
+                        Span::styled(
+                            format!("  {}", insight.file_path),
+                            Style::default().fg(theme.warning()),
+                        ),
+                    ]));
+                    // Before snippet
+                    if let Some(before) = &insight.before_snippet {
+                        lines.push(Line::from(Span::styled(
+                            " Before:",
+                            theme.muted_style(),
+                        )));
+                        for snippet_line in before.lines() {
+                            lines.push(Line::from(Span::styled(
+                                format!("   {}", snippet_line),
+                                Style::default().fg(Color::Red),
+                            )));
+                        }
+                    }
+                    // After snippet
+                    if let Some(after) = &insight.after_snippet {
+                        lines.push(Line::from(Span::styled(
+                            " After:",
+                            theme.muted_style(),
+                        )));
+                        for snippet_line in after.lines() {
+                            lines.push(Line::from(Span::styled(
+                                format!("   {}", snippet_line),
+                                Style::default().fg(Color::Green),
+                            )));
+                        }
+                    }
+                    // Body (reasoning)
+                    for body_line in insight.body.lines() {
+                        lines.push(Line::from(Span::styled(
+                            format!(" {}", body_line),
+                            theme.normal_style(),
+                        )));
+                    }
+                }
+                Text::from(lines)
+            };
+            let insights_widget = Paragraph::new(content)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(border),
+                )
+                .wrap(Wrap { trim: false })
+                .scroll((app.insight_scroll as u16, 0));
+            f.render_widget(insights_widget, chunks[2]);
         }
     }
 }

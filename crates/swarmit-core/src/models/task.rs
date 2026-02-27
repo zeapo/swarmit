@@ -33,6 +33,19 @@ pub struct Comment {
     pub created_at: DateTime<Utc>,
 }
 
+/// A structured insight recorded by an agent about a code change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Insight {
+    pub id: Uuid,
+    pub task_id: ItemId,
+    pub author: AgentId,
+    pub file_path: String,
+    pub before_snippet: Option<String>,
+    pub after_snippet: Option<String>,
+    pub body: String,
+    pub created_at: DateTime<Utc>,
+}
+
 impl Task {
     pub fn new(id: ItemId, title: impl Into<String>, created_by: AgentId) -> Self {
         let now = Utc::now();

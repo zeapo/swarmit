@@ -23,6 +23,7 @@ pub enum DetailTab {
     #[default]
     Description,
     Comments,
+    Insights,
 }
 
 /// Sort order for the dashboard.
@@ -206,6 +207,9 @@ pub struct App {
     /// Vertical scroll offset for the comments tab.
     pub comment_scroll: usize,
 
+    /// Vertical scroll offset for the insights tab.
+    pub insight_scroll: usize,
+
     /// Which tab is active in the task detail pane.
     pub detail_tab: DetailTab,
 
@@ -295,6 +299,7 @@ impl App {
             focus: Focus::default(),
             detail_scroll: 0,
             comment_scroll: 0,
+            insight_scroll: 0,
             detail_tab: DetailTab::default(),
             detail_width_percent: 50,
             highlight_cache: None,
@@ -334,6 +339,7 @@ impl App {
                     self.focus = Focus::List;
                     self.detail_scroll = 0;
                     self.comment_scroll = 0;
+                    self.insight_scroll = 0;
                     self.detail_tab = DetailTab::Description;
                 } else if matches!(self.screen, Screen::Help) {
                     self.screen = Screen::Main;
@@ -350,12 +356,16 @@ impl App {
                         DetailTab::Comments => {
                             self.comment_scroll = self.comment_scroll.saturating_sub(1);
                         }
+                        DetailTab::Insights => {
+                            self.insight_scroll = self.insight_scroll.saturating_sub(1);
+                        }
                     }
                 } else {
                     self.move_up();
                     if self.detail_open {
                         self.detail_scroll = 0;
                         self.comment_scroll = 0;
+                        self.insight_scroll = 0;
                         self.detail_tab = DetailTab::Description;
                     }
                 }
@@ -369,12 +379,16 @@ impl App {
                         DetailTab::Comments => {
                             self.comment_scroll += 1;
                         }
+                        DetailTab::Insights => {
+                            self.insight_scroll += 1;
+                        }
                     }
                 } else {
                     self.move_down();
                     if self.detail_open {
                         self.detail_scroll = 0;
                         self.comment_scroll = 0;
+                        self.insight_scroll = 0;
                         self.detail_tab = DetailTab::Description;
                     }
                 }
@@ -389,6 +403,7 @@ impl App {
                 self.focus = Focus::Detail;
                 self.detail_scroll = 0;
                 self.comment_scroll = 0;
+                self.insight_scroll = 0;
                 self.detail_tab = DetailTab::Description;
             }
             Action::FocusLeft => {
@@ -398,6 +413,8 @@ impl App {
                     self.detail_open = false;
                     self.focus = Focus::List;
                     self.detail_scroll = 0;
+                    self.comment_scroll = 0;
+                    self.insight_scroll = 0;
                 }
             }
             Action::Help => {
@@ -434,7 +451,8 @@ impl App {
                 if self.focus == Focus::Detail {
                     self.detail_tab = match self.detail_tab {
                         DetailTab::Description => DetailTab::Comments,
-                        DetailTab::Comments => DetailTab::Description,
+                        DetailTab::Comments => DetailTab::Insights,
+                        DetailTab::Insights => DetailTab::Description,
                     };
                 }
             }

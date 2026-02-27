@@ -3,8 +3,8 @@ pub mod models;
 pub mod state;
 
 pub use models::{
-    AgentId, Comment, Epic, ItemId, Priority, Project, ProjectConfig, RelationType, Relationship,
-    Result, Status, SwarmitError, Task,
+    AgentId, Comment, Epic, Insight, ItemId, Priority, Project, ProjectConfig, RelationType,
+    Relationship, Result, Status, SwarmitError, Task,
 };
 
 use std::path::Path;

@@ -7,7 +7,8 @@ use std::path::PathBuf;
 
 use commands::{
     comment::CommentArgs, compact::CompactArgs, epic::EpicArgs, init::InitArgs,
-    link::LinkArgs, log::LogArgs, project::ProjectArgs, sync::SyncArgs, task::TaskArgs,
+    insight::InsightArgs, link::LinkArgs, log::LogArgs, project::ProjectArgs, sync::SyncArgs,
+    task::TaskArgs,
 };
 
 #[derive(Parser, Debug)]
@@ -49,6 +50,8 @@ pub enum Commands {
     Link(LinkArgs),
     /// Manage comments
     Comment(CommentArgs),
+    /// Manage insights (structured code change records)
+    Insight(InsightArgs),
     /// View operation log
     Log(LogArgs),
     /// Compact the operation log
@@ -66,6 +69,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Some(Commands::Task(args)) => commands::task::run(args, &cli),
         Some(Commands::Link(args)) => commands::link::run(args, &cli),
         Some(Commands::Comment(args)) => commands::comment::run(args, &cli),
+        Some(Commands::Insight(args)) => commands::insight::run(args, &cli),
         Some(Commands::Log(args)) => commands::log::run(args, &cli),
         Some(Commands::Compact(args)) => commands::compact::run(args, &cli),
         Some(Commands::Project(args)) => commands::project::run(args, &cli),

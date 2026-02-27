@@ -12,4 +12,4 @@ pub use id::{AgentId, ItemId};
 pub use project::{Project, ProjectConfig};
 pub use relationship::{RelationType, Relationship};
 pub use status::{Priority, Status};
-pub use task::{Comment, Task};
+pub use task::{Comment, Insight, Task};

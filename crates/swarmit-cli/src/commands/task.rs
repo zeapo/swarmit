@@ -280,6 +280,7 @@ fn show(args: &TaskShowArgs, cli: &Cli) -> Result<()> {
 
     let rels = state.relationships_for(&id);
     let comments = state.comments_for(&id);
+    let insights = state.insights_for(&id);
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -305,6 +306,20 @@ fn show(args: &TaskShowArgs, cli: &Cli) -> Result<()> {
                     })
                 })
                 .collect();
+            let insights_data: Vec<_> = insights
+                .iter()
+                .map(|i| {
+                    serde_json::json!({
+                        "id": i.id.to_string(),
+                        "author": i.author.to_string(),
+                        "file_path": i.file_path,
+                        "before_snippet": i.before_snippet,
+                        "after_snippet": i.after_snippet,
+                        "body": i.body,
+                        "created_at": i.created_at.to_rfc3339(),
+                    })
+                })
+                .collect();
             print_json_ok(serde_json::json!({
                 "id": task.id.to_string(),
                 "title": task.title,
@@ -316,6 +331,7 @@ fn show(args: &TaskShowArgs, cli: &Cli) -> Result<()> {
                 "created_at": task.created_at.to_rfc3339(),
                 "relationships": rels_data,
                 "comments": comments_data,
+                "insights": insights_data,
             }));
         }
         OutputMode::Pretty => {
@@ -341,6 +357,24 @@ fn show(args: &TaskShowArgs, cli: &Cli) -> Result<()> {
                 println!("\nComments ({}):", comments.len());
                 for c in &comments {
                     println!("  [{}] {}: {}", c.created_at.format("%Y-%m-%d %H:%M"), c.author, c.body);
+                }
+            }
+            if !insights.is_empty() {
+                println!("\nInsights ({}):", insights.len());
+                for i in &insights {
+                    println!(
+                        "  [{}] {} — {}",
+                        i.created_at.format("%Y-%m-%d %H:%M"),
+                        i.author,
+                        i.file_path,
+                    );
+                    if let Some(before) = &i.before_snippet {
+                        println!("    Before: {}", before);
+                    }
+                    if let Some(after) = &i.after_snippet {
+                        println!("    After:  {}", after);
+                    }
+                    println!("    {}", i.body);
                 }
             }
         }

@@ -33,12 +33,23 @@ Implement the task. Use `swarmit comment add` to record progress notes:
 swarmit comment add TASK-007 --body "Implemented OAuth flow, tests passing" --agent me
 ```
 
-### 4. Mark done
+### 4. Record insights
+
+After completing work, add structured insights for each file you changed:
+```bash
+swarmit insight add TASK-007 --file src/auth/oauth.rs \
+  --before "fn login() { todo!() }" \
+  --after "fn login() -> Result<Token> { ... }" \
+  --body "Implemented OAuth login with token refresh" --agent me
+```
+Add one insight per file changed. `--before` and `--after` are optional.
+
+### 5. Mark done
 ```bash
 swarmit task done TASK-007 --agent me
 ```
 
-### 5. Pick the next task
+### 6. Pick the next task
 Loop back to step 1.
 
 ---
@@ -59,6 +70,8 @@ Loop back to step 1.
 | `swarmit epic show EPIC-001` | Epic details |
 | `swarmit link add --from TASK-001 --to TASK-002 --type blocks --agent me` | Add relationship |
 | `swarmit comment add TASK-007 --body "..." --agent me` | Add comment |
+| `swarmit insight add TASK-007 --file path --body "..." --agent me` | Add insight |
+| `swarmit insight list TASK-007` | List insights on a task |
 | `swarmit log --tail 20` | Recent operations |
 | `swarmit compact --agent me` | Compact log |
 
@@ -135,7 +148,8 @@ Never leave a task claimed but unfinished without a comment explaining why. Neve
 3. **Claim before working** — check `task list --status todo`, claim one, then start.
 4. **One task at a time** — claim only what you're actively working on.
 5. **Comment on progress** — other agents (and humans) can see your notes in the TUI.
-6. **Check for blockers** — use `task show` to see if a task is blocked by others.
+6. **Add insights when completing tasks** — one per file changed, documenting what and why.
+7. **Check for blockers** — use `task show` to see if a task is blocked by others.
 
 ---
 
