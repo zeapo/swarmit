@@ -3,6 +3,9 @@ pub mod components;
 pub mod events;
 pub mod theme;
 
+#[cfg(test)]
+mod test_harness;
+
 use std::io;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -16,7 +19,7 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Layout},
-    Terminal,
+    Frame, Terminal,
 };
 
 use app::App;
@@ -120,71 +123,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         // Draw frame
         {
             let _g = prof_guard!("terminal_draw");
-            terminal.draw(|f| {
-                let size = f.area();
-
-                // Reserve bottom row for status bar
-                let chunks =
-                    Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(size);
-
-                let main_area = chunks[0];
-                let status_area = chunks[1];
-
-                // Render current screen
-                match &app.screen {
-                    Screen::Main => {
-                        if app.detail_open {
-                            let left_pct = 100 - app.detail_width_percent;
-                            let split = Layout::horizontal([
-                                Constraint::Percentage(left_pct),
-                                Constraint::Percentage(app.detail_width_percent),
-                            ])
-                            .split(main_area);
-                            components::tree_list::render(f, app, split[0]);
-                            // Right side: 1-row breadcrumb + detail pane content
-                            let right =
-                                Layout::vertical([Constraint::Length(1), Constraint::Min(0)])
-                                    .split(split[1]);
-                            components::detail_pane::render_breadcrumb(f, app, right[0]);
-                            components::detail_pane::render(f, app, right[1]);
-                        } else {
-                            components::tree_list::render(f, app, main_area);
-                        }
-                    }
-                    Screen::Help => {
-                        // Render tree underneath help overlay
-                        components::tree_list::render(f, app, main_area);
-                        components::help::render(f, &app.theme, main_area);
-                    }
-                }
-
-                // Render modal overlay (if any) on top of the current screen
-                if let Some(modal) = &app.modal {
-                    match modal {
-                        Modal::QuitConfirm => {
-                            components::quit_confirm::render(f, &app.theme, main_area)
-                        }
-                        Modal::TaskCreate { .. } => {
-                            components::task_create::render(f, app, main_area)
-                        }
-                        Modal::FilterSelect { selected_index } => {
-                            components::filter_select::render(f, app, *selected_index, main_area)
-                        }
-                        Modal::SortSelect { selected_index } => {
-                            components::sort_select::render(f, app, *selected_index, main_area)
-                        }
-                    }
-                }
-
-                // Crab parade overlay — rendered on top of all content.
-                if let Some(ref anim) = app.crab_animation {
-                    if anim.active {
-                        components::crab_parade::render(f, anim, size, &app.theme);
-                    }
-                }
-
-                components::status_bar::render(f, app, status_area);
-            })?;
+            terminal.draw(|f| render_frame(f, app))?;
         }
 
         // Poll for keyboard events (100ms timeout = ~10fps)
@@ -195,29 +134,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
 
         if has_event {
             if let Event::Key(key) = event::read()? {
-                // Ctrl+C always quits immediately (no dialog)
-                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                    return Ok(());
-                }
-                {
-                    let _g = prof_guard!("handle_key");
-                    if app.crab_animation.is_some() {
-                        // Any keypress dismisses the crab parade.
-                        app.crab_animation = None;
-                    } else {
-                        // Feed key to Konami tracker before normal dispatch.
-                        if app.konami_tracker.feed(key.code) {
-                            app.start_crab_animation();
-                        } else if app.modal.is_some() {
-                            app.handle_modal_key(key.code, key.modifiers);
-                        } else {
-                            let action = key_to_action(key.code, key.modifiers);
-                            app.handle_action(action);
-                        }
-                    }
-                }
-
-                if app.should_quit {
+                if handle_key(app, key.code, key.modifiers) {
                     return Ok(());
                 }
             }
@@ -241,6 +158,101 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
     }
 }
 
+/// Render one full frame of the TUI into the given `Frame`.
+///
+/// Extracted from `run_loop` so that tests can call it with a `TestBackend`.
+pub(crate) fn render_frame(f: &mut Frame, app: &App) {
+    let size = f.area();
+
+    // Reserve bottom row for status bar
+    let chunks = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(size);
+
+    let main_area = chunks[0];
+    let status_area = chunks[1];
+
+    // Render current screen
+    match &app.screen {
+        Screen::Main => {
+            if app.detail_open {
+                let left_pct = 100 - app.detail_width_percent;
+                let split = Layout::horizontal([
+                    Constraint::Percentage(left_pct),
+                    Constraint::Percentage(app.detail_width_percent),
+                ])
+                .split(main_area);
+                components::tree_list::render(f, app, split[0]);
+                // Right side: 1-row breadcrumb + detail pane content
+                let right = Layout::vertical([Constraint::Length(1), Constraint::Min(0)])
+                    .split(split[1]);
+                components::detail_pane::render_breadcrumb(f, app, right[0]);
+                components::detail_pane::render(f, app, right[1]);
+            } else {
+                components::tree_list::render(f, app, main_area);
+            }
+        }
+        Screen::Help => {
+            // Render tree underneath help overlay
+            components::tree_list::render(f, app, main_area);
+            components::help::render(f, &app.theme, main_area);
+        }
+    }
+
+    // Render modal overlay (if any) on top of the current screen
+    if let Some(modal) = &app.modal {
+        match modal {
+            Modal::QuitConfirm => components::quit_confirm::render(f, &app.theme, main_area),
+            Modal::TaskCreate { .. } => components::task_create::render(f, app, main_area),
+            Modal::FilterSelect { selected_index } => {
+                components::filter_select::render(f, app, *selected_index, main_area)
+            }
+            Modal::SortSelect { selected_index } => {
+                components::sort_select::render(f, app, *selected_index, main_area)
+            }
+        }
+    }
+
+    // Crab parade overlay — rendered on top of all content.
+    if let Some(ref anim) = app.crab_animation {
+        if anim.active {
+            components::crab_parade::render(f, anim, size, &app.theme);
+        }
+    }
+
+    components::status_bar::render(f, app, status_area);
+}
+
+/// Process a single key event through the full input pipeline.
+///
+/// Returns `true` if the application should quit. Covers: Ctrl+C immediate
+/// quit, crab animation dismissal, Konami sequence tracking, modal routing,
+/// and normal action dispatch.
+pub(crate) fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> bool {
+    // Ctrl+C always quits immediately (no dialog)
+    if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+        return true;
+    }
+
+    {
+        let _g = prof_guard!("handle_key");
+        if app.crab_animation.is_some() {
+            // Any keypress dismisses the crab parade.
+            app.crab_animation = None;
+        } else {
+            // Feed key to Konami tracker before normal dispatch.
+            if app.konami_tracker.feed(code) {
+                app.start_crab_animation();
+            } else if app.modal.is_some() {
+                app.handle_modal_key(code, modifiers);
+            } else {
+                let action = key_to_action(code, modifiers);
+                app.handle_action(action);
+            }
+        }
+    }
+
+    app.should_quit
+}
+
 fn key_to_action(code: KeyCode, _modifiers: KeyModifiers) -> Action {
     match code {
         KeyCode::Char('q') => Action::QuitRequest,
@@ -258,6 +270,7 @@ fn key_to_action(code: KeyCode, _modifiers: KeyModifiers) -> Action {
         KeyCode::Char('r') => Action::Refresh,
         KeyCode::Char('<') => Action::ResizeDetail(-5),
         KeyCode::Char('>') => Action::ResizeDetail(5),
+        KeyCode::Tab => Action::SwitchDetailTab,
         _ => Action::None,
     }
 }
