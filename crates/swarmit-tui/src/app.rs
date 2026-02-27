@@ -17,6 +17,14 @@ use crate::components::tree_list::DashboardRow;
 use crate::events::{Action, Focus, KonamiTracker, Modal, Screen, TaskFormField};
 use crate::theme::Theme;
 
+/// Which tab is active in the task detail pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DetailTab {
+    #[default]
+    Description,
+    Comments,
+}
+
 /// Sort order for the dashboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortOption {
@@ -192,8 +200,14 @@ pub struct App {
     /// Which pane currently has keyboard focus.
     pub focus: Focus,
 
-    /// Vertical scroll offset for the detail pane.
+    /// Vertical scroll offset for the detail pane (description tab).
     pub detail_scroll: usize,
+
+    /// Vertical scroll offset for the comments tab.
+    pub comment_scroll: usize,
+
+    /// Which tab is active in the task detail pane.
+    pub detail_tab: DetailTab,
 
     /// Width percentage for the detail pane (20-80).
     pub detail_width_percent: u16,
@@ -280,6 +294,8 @@ impl App {
             detail_open: false,
             focus: Focus::default(),
             detail_scroll: 0,
+            comment_scroll: 0,
+            detail_tab: DetailTab::default(),
             detail_width_percent: 50,
             highlight_cache: None,
             highlight_tx: hl_work_tx,
@@ -317,6 +333,8 @@ impl App {
                     self.detail_open = false;
                     self.focus = Focus::List;
                     self.detail_scroll = 0;
+                    self.comment_scroll = 0;
+                    self.detail_tab = DetailTab::Description;
                 } else if matches!(self.screen, Screen::Help) {
                     self.screen = Screen::Main;
                 } else {
@@ -325,21 +343,39 @@ impl App {
             }
             Action::Up => {
                 if self.focus == Focus::Detail {
-                    self.detail_scroll = self.detail_scroll.saturating_sub(1);
+                    match self.detail_tab {
+                        DetailTab::Description => {
+                            self.detail_scroll = self.detail_scroll.saturating_sub(1);
+                        }
+                        DetailTab::Comments => {
+                            self.comment_scroll = self.comment_scroll.saturating_sub(1);
+                        }
+                    }
                 } else {
                     self.move_up();
                     if self.detail_open {
                         self.detail_scroll = 0;
+                        self.comment_scroll = 0;
+                        self.detail_tab = DetailTab::Description;
                     }
                 }
             }
             Action::Down => {
                 if self.focus == Focus::Detail {
-                    self.detail_scroll += 1;
+                    match self.detail_tab {
+                        DetailTab::Description => {
+                            self.detail_scroll += 1;
+                        }
+                        DetailTab::Comments => {
+                            self.comment_scroll += 1;
+                        }
+                    }
                 } else {
                     self.move_down();
                     if self.detail_open {
                         self.detail_scroll = 0;
+                        self.comment_scroll = 0;
+                        self.detail_tab = DetailTab::Description;
                     }
                 }
             }
@@ -352,6 +388,8 @@ impl App {
                 }
                 self.focus = Focus::Detail;
                 self.detail_scroll = 0;
+                self.comment_scroll = 0;
+                self.detail_tab = DetailTab::Description;
             }
             Action::FocusLeft => {
                 if self.focus == Focus::Detail {
@@ -391,6 +429,14 @@ impl App {
             Action::ResizeDetail(delta) => {
                 let new_width = self.detail_width_percent as i16 + delta as i16;
                 self.detail_width_percent = new_width.clamp(20, 80) as u16;
+            }
+            Action::SwitchDetailTab => {
+                if self.focus == Focus::Detail {
+                    self.detail_tab = match self.detail_tab {
+                        DetailTab::Description => DetailTab::Comments,
+                        DetailTab::Comments => DetailTab::Description,
+                    };
+                }
             }
             action => self.apply_action(action),
         }

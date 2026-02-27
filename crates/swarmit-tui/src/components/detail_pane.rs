@@ -1,7 +1,7 @@
 use bat::assets::HighlightingAssets;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
@@ -11,7 +11,7 @@ use syntect::util::LinesWithEndings;
 
 use swarmit_core::models::ItemId;
 
-use crate::app::App;
+use crate::app::{App, DetailTab};
 use crate::components::tree_list::DashboardRow;
 use crate::events::Focus;
 
@@ -153,7 +153,7 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(8), Constraint::Min(3)])
+        .constraints([Constraint::Length(6), Constraint::Length(1), Constraint::Min(3)])
         .split(area);
 
     // ── Metadata ─────────────────────────────────────────────────────────
@@ -161,14 +161,6 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
     let priority_str = task.priority.to_string();
 
     let mut meta_lines = vec![
-        Line::from(vec![
-            Span::styled(" ID:       ", theme.muted_style()),
-            Span::styled(task.id.to_string(), theme.title_style()),
-        ]),
-        Line::from(vec![
-            Span::styled(" Title:    ", theme.muted_style()),
-            Span::styled(task.title.clone(), theme.normal_style()),
-        ]),
         Line::from(vec![
             Span::styled(" Status:   ", theme.muted_style()),
             Span::styled(
@@ -218,37 +210,109 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(Span::styled(format!(" {} ", task.id), theme.title_style()))
                 .border_style(border),
         )
         .wrap(Wrap { trim: true });
     f.render_widget(meta, chunks[0]);
 
-    // ── Description (full width, scrollable, bat-highlighted markdown) ───
-    // Prefer the pre-computed cache to avoid per-frame re-highlighting.
-    // Only use the cache when it holds an actual description (Some(_)); if
-    // the description is None the "No description." placeholder is rendered
-    // via the fallback path below.
-    let desc_content: Text<'static> = if let Some((_, Some(_), ref cached)) = app.highlight_cache {
-        cached.clone()
-    } else if let Some(raw) = task.description.as_deref() {
-        Text::from(raw.to_owned())
-    } else {
-        Text::from(Line::from(Span::styled(
-            "No description.",
+    // ── Tab bar ─────────────────────────────────────────────────────────
+    let comment_count = app.state.comments_for(task_id).len();
+
+    let (desc_style, comments_style) = match app.detail_tab {
+        DetailTab::Description => (
+            Style::default()
+                .fg(theme.primary())
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
             theme.muted_style(),
-        )))
+        ),
+        DetailTab::Comments => (
+            theme.muted_style(),
+            Style::default()
+                .fg(theme.primary())
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        ),
     };
-    let desc = Paragraph::new(desc_content)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled(" Description ", theme.title_style()))
-                .border_style(border),
-        )
-        .wrap(Wrap { trim: false })
-        .scroll((app.detail_scroll as u16, 0));
-    f.render_widget(desc, chunks[1]);
+
+    let tab_line = Line::from(vec![
+        Span::styled(" Description ", desc_style),
+        Span::styled(" │ ", theme.muted_style()),
+        Span::styled(format!("Comments ({}) ", comment_count), comments_style),
+    ]);
+    f.render_widget(Paragraph::new(tab_line), chunks[1]);
+
+    // ── Tab content ───────────────────────────────────────────────────
+    match app.detail_tab {
+        DetailTab::Description => {
+            // Prefer the pre-computed highlight cache to avoid per-frame bat calls.
+            let desc_content: Text<'static> =
+                if let Some((_, Some(_), ref cached)) = app.highlight_cache {
+                    cached.clone()
+                } else if let Some(raw) = task.description.as_deref() {
+                    Text::from(raw.to_owned())
+                } else {
+                    Text::from(Line::from(Span::styled(
+                        "No description.",
+                        theme.muted_style(),
+                    )))
+                };
+            let desc = Paragraph::new(desc_content)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(border),
+                )
+                .wrap(Wrap { trim: false })
+                .scroll((app.detail_scroll as u16, 0));
+            f.render_widget(desc, chunks[2]);
+        }
+        DetailTab::Comments => {
+            let comments = app.state.comments_for(task_id);
+            let content: Text = if comments.is_empty() {
+                Text::from(Line::from(Span::styled(
+                    "No comments.",
+                    theme.muted_style(),
+                )))
+            } else {
+                let mut lines: Vec<Line> = Vec::new();
+                for (i, comment) in comments.iter().enumerate() {
+                    if i > 0 {
+                        lines.push(Line::from(Span::styled(
+                            "───────────────────────────────────",
+                            theme.muted_style(),
+                        )));
+                    }
+                    // Author · timestamp header
+                    let ts = comment.created_at.format("%Y-%m-%d %H:%M");
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!(" {} ", comment.author),
+                            Style::default()
+                                .fg(theme.primary())
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(format!("· {}", ts), theme.muted_style()),
+                    ]));
+                    // Body lines
+                    for body_line in comment.body.lines() {
+                        lines.push(Line::from(Span::styled(
+                            format!(" {}", body_line),
+                            theme.normal_style(),
+                        )));
+                    }
+                }
+                Text::from(lines)
+            };
+            let comments_widget = Paragraph::new(content)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(border),
+                )
+                .wrap(Wrap { trim: false })
+                .scroll((app.comment_scroll as u16, 0));
+            f.render_widget(comments_widget, chunks[2]);
+        }
+    }
 }
 
 fn render_epic(f: &mut Frame, app: &App, area: Rect, epic_id: &ItemId) {
@@ -268,7 +332,7 @@ fn render_epic(f: &mut Frame, app: &App, area: Rect, epic_id: &ItemId) {
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(6), Constraint::Min(3)])
+        .constraints([Constraint::Length(5), Constraint::Min(3)])
         .split(area);
 
     // ── Metadata ─────────────────────────────────────────────────────────
@@ -276,14 +340,6 @@ fn render_epic(f: &mut Frame, app: &App, area: Rect, epic_id: &ItemId) {
     let priority_str = epic.priority.to_string();
 
     let mut meta_lines = vec![
-        Line::from(vec![
-            Span::styled(" ID:       ", theme.muted_style()),
-            Span::styled(epic.id.to_string(), theme.title_style()),
-        ]),
-        Line::from(vec![
-            Span::styled(" Title:    ", theme.muted_style()),
-            Span::styled(epic.title.clone(), theme.normal_style()),
-        ]),
         Line::from(vec![
             Span::styled(" Status:   ", theme.muted_style()),
             Span::styled(
@@ -314,7 +370,6 @@ fn render_epic(f: &mut Frame, app: &App, area: Rect, epic_id: &ItemId) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(Span::styled(format!(" {} ", epic.id), theme.title_style()))
                 .border_style(border),
         )
         .wrap(Wrap { trim: true });

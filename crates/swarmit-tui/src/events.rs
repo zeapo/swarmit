@@ -86,6 +86,7 @@ pub enum Action {
     SortDialogConfirm,
     SortDialogCancel,
     ResizeDetail(i8),
+    SwitchDetailTab,
     None,
 }
 
