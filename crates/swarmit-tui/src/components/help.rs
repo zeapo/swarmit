@@ -16,8 +16,8 @@ pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
     let keybindings: &[(&str, &str)] = &[
         ("j / ↓", "Move down / scroll detail (when detail focused)"),
         ("k / ↑", "Move up / scroll detail (when detail focused)"),
-        ("l / Enter", "Open detail pane / move focus to detail"),
-        ("h", "Return focus to list (panel stays open)"),
+        ("l / → / Enter", "Open detail pane / move focus to detail"),
+        ("h / ←", "Return focus to list (panel stays open)"),
         ("Esc", "Close detail pane / back / quit dialog"),
         ("Space", "Toggle expand/collapse epic"),
         ("<", "Shrink detail pane"),
