@@ -9,24 +9,18 @@ use crate::theme::Theme;
 
 /// Renders a centered help overlay on top of the current screen.
 pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
-    let popup = centered_rect(70, 36, area);
+    let popup = centered_rect(70, 27, area);
 
     f.render_widget(Clear, popup);
 
     let keybindings: &[(&str, &str)] = &[
-        ("j / ↓", "Move down / scroll detail (when detail focused)"),
-        ("k / ↑", "Move up / scroll detail (when detail focused)"),
-        ("l / →", "Expand epic / open detail on task / tab fwd"),
-        ("h / ←", "Collapse epic / close detail on task / tab bwd"),
+        ("hjkl / arrows", "Move ↕, switch tabs ↔ (scroll in detail)"),
         ("Enter", "Open + focus detail pane"),
-        ("Shift+H/K", "Switch focus to list pane"),
-        ("Shift+L/J", "Switch focus to detail pane"),
-        ("Esc", "Close detail pane / back / quit dialog"),
+        ("q/Esc/Bksp", "Back — close detail, then quit"),
+        ("Shift+HJKL", "Switch focus between panes"),
         ("Space", "Toggle expand/collapse epic"),
-        ("=", "Grow focused pane"),
-        ("-", "Shrink focused pane"),
+        ("= / -", "Grow / shrink focused pane"),
         ("|", "Toggle horizontal/vertical split"),
-        ("Tab", "Switch detail tab (Desc/Comments/Insights)"),
         ("e", "Edit description in $EDITOR (Description tab)"),
         ("a", "Add comment in $EDITOR (Comments tab)"),
         ("S", "Change task status"),
@@ -37,7 +31,6 @@ pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
         ("/", "Search (coming soon)"),
         ("r", "Refresh"),
         ("?", "Toggle this help"),
-        ("q", "Quit (with confirmation)"),
     ];
 
     let mut lines: Vec<Line> = vec![

@@ -288,13 +288,14 @@ fn key_to_action(code: KeyCode, modifiers: KeyModifiers) -> Action {
 
     // Normal bindings
     match code {
-        KeyCode::Char('q') => Action::QuitRequest,
+        KeyCode::Char('q') => Action::Back,
         KeyCode::Char('n') => Action::NewTask,
         KeyCode::Char('j') | KeyCode::Down => Action::Down,
         KeyCode::Char('k') | KeyCode::Up => Action::Up,
         KeyCode::Enter => Action::FocusDetail,
-        KeyCode::Char('l') | KeyCode::Right => Action::ListExpand,
-        KeyCode::Char('h') | KeyCode::Left => Action::ListCollapse,
+        KeyCode::Backspace => Action::Back,
+        KeyCode::Char('l') | KeyCode::Right => Action::TabForward,
+        KeyCode::Char('h') | KeyCode::Left => Action::TabBackward,
         KeyCode::Char(' ') => Action::ToggleCollapse,
         KeyCode::Char('=') => Action::ResizePane(5),
         KeyCode::Char('-') => Action::ResizePane(-5),

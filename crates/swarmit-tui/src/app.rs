@@ -341,9 +341,6 @@ impl App {
     pub fn handle_action(&mut self, action: Action) {
         match action {
             Action::Quit => self.should_quit = true,
-            Action::QuitRequest => {
-                self.modal = Some(Modal::QuitConfirm);
-            }
             Action::NewTask => {
                 self.modal = Some(Modal::TaskCreate {
                     title: String::new(),
@@ -474,82 +471,22 @@ impl App {
                     SplitDirection::Vertical => SplitDirection::Horizontal,
                 };
             }
-            Action::ListCollapse => {
-                if self.focus == Focus::Detail {
-                    // Cycle detail tab backward
+            Action::TabBackward => {
+                if self.detail_open {
                     self.detail_tab = match self.detail_tab {
                         DetailTab::Description => DetailTab::Insights,
                         DetailTab::Comments => DetailTab::Description,
                         DetailTab::Insights => DetailTab::Comments,
                     };
-                } else {
-                    // List focus: collapse epic or close detail pane for task rows
-                    if let Some(row) = self.dashboard_rows.get(self.selected_index) {
-                        match row {
-                            DashboardRow::Epic { id } => {
-                                let eid = id.clone();
-                                if !self.collapsed_epics.contains(&eid) {
-                                    self.collapsed_epics.insert(eid.clone());
-                                    self.rebuild_dashboard_rows();
-                                    if let Some(pos) = self
-                                        .dashboard_rows
-                                        .iter()
-                                        .position(|r| matches!(r, DashboardRow::Epic { id } if id == &eid))
-                                    {
-                                        self.selected_index = pos;
-                                    }
-                                } else if self.detail_open {
-                                    self.detail_open = false;
-                                    self.focus = Focus::List;
-                                    self.detail_scroll = 0;
-                                    self.comment_scroll = 0;
-                                    self.insight_scroll = 0;
-                                }
-                            }
-                            DashboardRow::Task { .. } => {
-                                if self.detail_open {
-                                    self.detail_open = false;
-                                    self.focus = Focus::List;
-                                    self.detail_scroll = 0;
-                                    self.comment_scroll = 0;
-                                    self.insight_scroll = 0;
-                                }
-                            }
-                        }
-                    }
                 }
             }
-            Action::ListExpand => {
-                if self.focus == Focus::Detail {
-                    // Cycle detail tab forward
+            Action::TabForward => {
+                if self.detail_open {
                     self.detail_tab = match self.detail_tab {
                         DetailTab::Description => DetailTab::Comments,
                         DetailTab::Comments => DetailTab::Insights,
                         DetailTab::Insights => DetailTab::Description,
                     };
-                } else {
-                    // List focus: expand epic or open+focus detail for task rows
-                    if let Some(row) = self.dashboard_rows.get(self.selected_index) {
-                        match row {
-                            DashboardRow::Epic { id } => {
-                                let eid = id.clone();
-                                if self.collapsed_epics.contains(&eid) {
-                                    self.collapsed_epics.remove(&eid);
-                                    self.rebuild_dashboard_rows();
-                                }
-                            }
-                            DashboardRow::Task { .. } => {
-                                if !self.detail_open {
-                                    self.detail_open = true;
-                                }
-                                self.focus = Focus::Detail;
-                                self.detail_scroll = 0;
-                                self.comment_scroll = 0;
-                                self.insight_scroll = 0;
-                                self.detail_tab = DetailTab::Description;
-                            }
-                        }
-                    }
                 }
             }
             Action::SwitchDetailTab => {
@@ -2189,79 +2126,59 @@ mod tests {
         assert_eq!(app.split_direction, SplitDirection::Horizontal);
     }
 
-    // --- ListCollapse / ListExpand tests ---
+    // --- TabBackward / TabForward tests ---
 
     #[test]
-    fn list_collapse_collapses_epic_on_list_focus() {
-        let (mut app, epic_id, _task_id) = setup_app_with_epic();
-        app.focus = Focus::List;
-        app.selected_index = 0; // epic row
-        assert_eq!(app.dashboard_rows.len(), 2);
-
-        app.handle_action(Action::ListCollapse);
-
-        assert!(app.collapsed_epics.contains(&epic_id));
-        assert_eq!(app.dashboard_rows.len(), 1);
-    }
-
-    #[test]
-    fn list_expand_expands_epic_on_list_focus() {
-        let (mut app, epic_id, _task_id) = setup_app_with_epic();
-        app.focus = Focus::List;
-        app.selected_index = 0;
-        app.collapsed_epics.insert(epic_id.clone());
-        app.rebuild_dashboard_rows();
-        assert_eq!(app.dashboard_rows.len(), 1);
-
-        app.handle_action(Action::ListExpand);
-
-        assert!(!app.collapsed_epics.contains(&epic_id));
-        assert_eq!(app.dashboard_rows.len(), 2);
-    }
-
-    #[test]
-    fn list_expand_opens_detail_on_task_row() {
-        let (mut app, _) = setup_app_with_task();
-        app.focus = Focus::List;
-        assert!(!app.detail_open);
-
-        app.handle_action(Action::ListExpand);
-
-        assert!(app.detail_open);
-        assert_eq!(app.focus, Focus::Detail);
-    }
-
-    #[test]
-    fn list_collapse_closes_detail_on_task_row() {
-        let (mut app, _) = setup_app_with_task();
-        app.detail_open = true;
-        app.focus = Focus::List;
-
-        app.handle_action(Action::ListCollapse);
-
-        assert!(!app.detail_open);
-        assert_eq!(app.focus, Focus::List);
-    }
-
-    #[test]
-    fn list_collapse_cycles_tab_backward_in_detail_focus() {
-        let (mut app, _) = setup_app_with_task();
-        app.detail_open = true;
-        app.focus = Focus::Detail;
-        app.detail_tab = DetailTab::Comments;
-
-        app.handle_action(Action::ListCollapse);
-        assert_eq!(app.detail_tab, DetailTab::Description);
-    }
-
-    #[test]
-    fn list_expand_cycles_tab_forward_in_detail_focus() {
+    fn tab_forward_cycles_tab_when_detail_open() {
         let (mut app, _) = setup_app_with_task();
         app.detail_open = true;
         app.focus = Focus::Detail;
         app.detail_tab = DetailTab::Description;
 
-        app.handle_action(Action::ListExpand);
+        app.handle_action(Action::TabForward);
         assert_eq!(app.detail_tab, DetailTab::Comments);
+
+        app.handle_action(Action::TabForward);
+        assert_eq!(app.detail_tab, DetailTab::Insights);
+
+        app.handle_action(Action::TabForward);
+        assert_eq!(app.detail_tab, DetailTab::Description);
+    }
+
+    #[test]
+    fn tab_backward_cycles_tab_when_detail_open() {
+        let (mut app, _) = setup_app_with_task();
+        app.detail_open = true;
+        app.focus = Focus::Detail;
+        app.detail_tab = DetailTab::Comments;
+
+        app.handle_action(Action::TabBackward);
+        assert_eq!(app.detail_tab, DetailTab::Description);
+
+        app.handle_action(Action::TabBackward);
+        assert_eq!(app.detail_tab, DetailTab::Insights);
+    }
+
+    #[test]
+    fn tab_forward_works_from_list_focus_with_detail_open() {
+        let (mut app, _) = setup_app_with_task();
+        app.detail_open = true;
+        app.focus = Focus::List;
+        app.detail_tab = DetailTab::Description;
+
+        app.handle_action(Action::TabForward);
+        assert_eq!(app.detail_tab, DetailTab::Comments);
+        assert_eq!(app.focus, Focus::List, "focus stays on list");
+    }
+
+    #[test]
+    fn tab_forward_noop_when_detail_closed() {
+        let (mut app, _) = setup_app_with_task();
+        app.detail_open = false;
+        app.detail_tab = DetailTab::Description;
+
+        app.handle_action(Action::TabForward);
+        assert_eq!(app.detail_tab, DetailTab::Description, "tab should not change");
+        assert!(!app.detail_open);
     }
 }
