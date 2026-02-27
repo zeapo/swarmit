@@ -66,7 +66,7 @@ All CLI mutations require `--agent <ID>` or `SWARMIT_AGENT` env var.
 JSON output (`--json`) always uses `{ "ok": bool, "data": ..., "error": ... }`.
 TTY auto-detection: piped stdout → JSON; terminal → pretty text.
 
-## Task Tracking
+## Task Management (Swarmit)
 
 **Use swarmit instead of Claude Code's built-in todo tools.**
 Never use `TodoWrite`, `TaskCreate`, `TaskUpdate`, or `TaskList` in this project.
@@ -75,10 +75,53 @@ and is visible to all agents and the TUI.
 
 | Instead of | Use |
 |------------|-----|
-| `TaskCreate` / `TodoWrite` | `swarmit task create --title "..." --agent me` |
-| Mark in-progress | `swarmit task claim TASK-NNN --agent me` |
-| Mark complete | `swarmit task done TASK-NNN --agent me` |
+| `TaskCreate` / `TodoWrite` | `swarmit task create --title "..." --agent claude` |
+| Mark in-progress | `swarmit task claim TASK-NNN --agent claude` |
+| Mark complete | `swarmit task done TASK-NNN --agent claude` |
 | `TaskList` | `swarmit task list --status todo --json` |
+
+### Status values
+
+`todo` · `in_progress` (aliases: `wip`, `inprogress`) · `done` · `blocked` · `cancelled`
+
+### Before starting work
+
+1. Check for existing tasks: `swarmit task list --json`
+2. If a matching task exists, claim it; otherwise create one
+3. For multi-step work, create an epic + tasks
+
+### Planning new work
+
+1. Create an epic: `swarmit epic create --title "..." --description "..." --agent claude`
+2. Create tasks with **full descriptions** (every step, file path, command — not just titles)
+3. Set up dependencies: `swarmit link add --from TASK-X --to TASK-Y --type blocks --agent claude`
+   - The inverse (`blocked_by`) is added automatically — don't create both directions
+4. Identify tasks with no blockers — these are candidates for parallel dispatch
+
+### Executing work
+
+**For epics with 3+ independent tasks**, use the `superpowers:dispatching-parallel-agents` skill and execute in waves:
+
+1. Fetch tasks: `swarmit task list --epic EPIC-NNN --status todo --json`
+2. Partition into waves by dependency graph:
+   - Wave 1: tasks with no blockers → dispatch all as parallel subagents
+   - Wave N: tasks unblocked after previous wave → dispatch in parallel
+3. Each subagent receives the full task description from `swarmit task show`, claims with a unique agent ID (`claude-1`, `claude-2`, …), and marks done on completion
+4. After each wave, re-check for newly unblocked tasks
+
+For smaller work (1–2 tasks), execute sequentially in the current session.
+
+### During execution (single task)
+
+- **Claim**: `swarmit task claim TASK-NNN --agent claude`
+- **Progress**: `swarmit comment add TASK-NNN --body "..." --agent claude`
+- **Blocked**: `swarmit task update TASK-NNN --status blocked --agent claude` (with a comment explaining why)
+- **Done**: `swarmit task done TASK-NNN --agent claude`
+- Never leave a task claimed but unfinished without a comment
+
+### Agent identity
+
+Use `--agent claude` for single-session work. For parallel subagents, use numbered (`claude-1`, `claude-2`) or role-based (`claude-backend`, `claude-tests`) IDs.
 
 ## Skill Files
 
