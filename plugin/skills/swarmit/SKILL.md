@@ -64,7 +64,23 @@ Loop back to step 1.
 
 ---
 
-## Creating Tasks from a Plan
+## Creating Epics and Tasks from a Plan
+
+### Check before you create
+
+Before creating any epic or task, **always check whether it already exists**. A previous session (e.g. a planning session) may have already created the tracking items.
+
+```bash
+# Check existing epics first
+swarmit epic list --json
+
+# Check existing tasks in a specific epic
+swarmit task list --epic EPIC-001 --json
+```
+
+If a matching epic/task already exists, **use it** — claim it and start working. Do not create a duplicate.
+
+### Populate descriptions
 
 When creating tasks from an implementation plan, **always populate `--description` with the full plan task body** — every step, file path, command, and expected output. The title alone is not enough; future agents claiming the task must not need to re-read the plan file.
 
