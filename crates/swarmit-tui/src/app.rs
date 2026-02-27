@@ -31,8 +31,8 @@ pub enum DetailTab {
 /// Sort order for the dashboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortOption {
-    CreationDate,
     #[default]
+    CreationDate,
     RecentUpdate,
     Title,
 }
@@ -1161,6 +1161,15 @@ impl App {
     /// Structure: orphan tasks first (no epic), then epics with their tasks.
     pub fn rebuild_dashboard_rows(&mut self) {
         let _guard = crate::prof_guard!("rebuild_dashboard_rows");
+
+        // Remember the currently-selected item by ID so we can restore focus
+        // after the row list is rebuilt (sort/filter/update can shuffle rows).
+        let prev_id: Option<(bool, ItemId)> =
+            self.dashboard_rows.get(self.selected_index).map(|row| match row {
+                DashboardRow::Epic { id } => (true, id.clone()),
+                DashboardRow::Task { id } => (false, id.clone()),
+            });
+
         let mut rows = Vec::new();
 
         // Collect all top-level items (orphan tasks and epics) into a unified
@@ -1243,10 +1252,26 @@ impl App {
 
         self.dashboard_rows = rows;
 
-        // Clamp selection to valid bounds.
-        let max = self.dashboard_rows.len().saturating_sub(1);
-        if self.selected_index > max {
-            self.selected_index = max;
+        // Restore selection by ID, falling back to clamping.
+        if let Some((is_epic, ref prev)) = prev_id {
+            if let Some(pos) = self.dashboard_rows.iter().position(|r| match r {
+                DashboardRow::Epic { id } => is_epic && id == prev,
+                DashboardRow::Task { id } => !is_epic && id == prev,
+            }) {
+                self.selected_index = pos;
+            } else {
+                // Item no longer visible (filtered out, collapsed) — clamp.
+                let max = self.dashboard_rows.len().saturating_sub(1);
+                if self.selected_index > max {
+                    self.selected_index = max;
+                }
+            }
+        } else {
+            // No previous selection (empty list before rebuild) — clamp.
+            let max = self.dashboard_rows.len().saturating_sub(1);
+            if self.selected_index > max {
+                self.selected_index = max;
+            }
         }
     }
 
@@ -1425,11 +1450,11 @@ mod tests {
     fn sort_dialog_opens_with_current_sort_preselected() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
-        // Default is RecentUpdate which is index 1 in SORT_OPTIONS
+        // Default is CreationDate which is index 0 in SORT_OPTIONS
         app.apply_action(Action::OpenSortDialog);
         assert!(matches!(
             app.modal,
-            Some(Modal::SortSelect { selected_index: 1 })
+            Some(Modal::SortSelect { selected_index: 0 })
         ));
     }
 
@@ -1566,7 +1591,7 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_rows_sorted_by_recent_update_by_default() {
+    fn dashboard_rows_sorted_by_creation_date_by_default() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
 
@@ -1599,10 +1624,10 @@ mod tests {
         let _ = app.state.apply(op2);
         app.rebuild_dashboard_rows();
 
-        // Default sort is RecentUpdate (most recent first).
-        // op2 was applied second so its created_at/updated_at is >= op1.
+        // Default sort is CreationDate (newest first).
+        // op2 was applied second so its created_at is >= op1.
         // Row order should have id2 before id1.
-        assert_eq!(app.dashboard_sort, SortOption::RecentUpdate);
+        assert_eq!(app.dashboard_sort, SortOption::CreationDate);
         assert!(app.dashboard_rows.len() >= 2);
     }
 
