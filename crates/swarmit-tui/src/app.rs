@@ -7,6 +7,8 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
 use ratatui::text::Text;
+use uuid::Uuid;
+
 use swarmit_core::events::locking::try_append_with_timeout;
 use swarmit_core::events::log::{append_operation, read_operations_since};
 use swarmit_core::events::operations::{Operation, OperationKind};
@@ -153,6 +155,21 @@ struct HighlightResult {
     text: Text<'static>,
 }
 
+/// A deferred request to open an external editor.
+///
+/// Set by `handle_action`; consumed by the run loop in `lib.rs` before each
+/// `terminal.draw()` call. This keeps I/O out of the action handler.
+#[derive(Debug)]
+pub enum EditorRequest {
+    EditDescription {
+        task_id: ItemId,
+        current_text: String,
+    },
+    NewComment {
+        task_id: ItemId,
+    },
+}
+
 /// Central application state.
 pub struct App {
     pub state: ProjectState,
@@ -230,6 +247,9 @@ pub struct App {
     pub crab_animation: Option<CrabAnimation>,
     /// Tracks progress through the Konami code sequence.
     pub konami_tracker: KonamiTracker,
+
+    /// Deferred editor request — consumed by the run loop before each draw.
+    pub pending_editor: Option<EditorRequest>,
 }
 
 impl App {
@@ -307,6 +327,7 @@ impl App {
             highlight_rx: hl_result_rx,
             crab_animation: None,
             konami_tracker: KonamiTracker::new(),
+            pending_editor: None,
         };
         app.rebuild_dashboard_rows();
         Ok(app)
@@ -456,11 +477,58 @@ impl App {
                     };
                 }
             }
+            Action::OpenStatusDialog => {
+                if self.selected_task_id().is_some() {
+                    let current = self.selected_task_status().unwrap_or(Status::Todo);
+                    let selected_index =
+                        crate::components::status_select::STATUS_OPTIONS
+                            .iter()
+                            .position(|s| *s == current)
+                            .unwrap_or(0);
+                    self.modal = Some(Modal::StatusSelect { selected_index });
+                }
+            }
+            Action::OpenEpicDialog => {
+                if self.selected_task_id().is_some() {
+                    let current_epic = self.selected_task_epic();
+                    let options = crate::components::epic_select::epic_options(self);
+                    let selected_index = options
+                        .iter()
+                        .position(|opt| *opt == current_epic)
+                        .unwrap_or(0);
+                    self.modal = Some(Modal::EpicSelect { selected_index });
+                }
+            }
+            Action::EditDescription => {
+                if self.focus == Focus::Detail
+                    && self.detail_tab == DetailTab::Description
+                {
+                    if let Some(task_id) = self.selected_task_id() {
+                        let current_text = self
+                            .state
+                            .tasks
+                            .get(&task_id)
+                            .and_then(|t| t.description.clone())
+                            .unwrap_or_default();
+                        self.pending_editor =
+                            Some(EditorRequest::EditDescription { task_id, current_text });
+                    }
+                }
+            }
+            Action::AddComment => {
+                if self.focus == Focus::Detail
+                    && self.detail_tab == DetailTab::Comments
+                {
+                    if let Some(task_id) = self.selected_task_id() {
+                        self.pending_editor = Some(EditorRequest::NewComment { task_id });
+                    }
+                }
+            }
             action => self.apply_action(action),
         }
     }
 
-    /// Apply filter-dialog and sort-dialog actions.
+    /// Apply filter-dialog, sort-dialog, status-dialog, and epic-dialog actions.
     fn apply_action(&mut self, action: Action) {
         match action {
             Action::OpenFilterDialog => {
@@ -511,6 +579,47 @@ impl App {
             Action::SortDialogCancel => {
                 self.modal = None;
             }
+            Action::StatusDialogMove(delta) => {
+                if let Some(Modal::StatusSelect { selected_index }) = &mut self.modal {
+                    let len = crate::components::status_select::STATUS_OPTIONS.len();
+                    *selected_index = ((*selected_index as isize + delta as isize)
+                        .rem_euclid(len as isize)) as usize;
+                }
+            }
+            Action::StatusDialogConfirm => {
+                if let Some(Modal::StatusSelect { selected_index }) = &self.modal {
+                    let status =
+                        crate::components::status_select::STATUS_OPTIONS[*selected_index];
+                    if let Some(task_id) = self.selected_task_id() {
+                        let _ = self.submit_status_change(task_id, status);
+                    }
+                }
+                self.modal = None;
+            }
+            Action::StatusDialogCancel => {
+                self.modal = None;
+            }
+            Action::EpicDialogMove(delta) => {
+                if let Some(Modal::EpicSelect { selected_index }) = &mut self.modal {
+                    // Must match epic_options(): "(none)" + sorted epics
+                    let len = self.state.epics.len() + 1;
+                    *selected_index = ((*selected_index as isize + delta as isize)
+                        .rem_euclid(len as isize)) as usize;
+                }
+            }
+            Action::EpicDialogConfirm => {
+                if let Some(Modal::EpicSelect { selected_index }) = &self.modal {
+                    let options = crate::components::epic_select::epic_options(self);
+                    let epic_id = options[*selected_index].clone();
+                    if let Some(task_id) = self.selected_task_id() {
+                        let _ = self.submit_epic_change(task_id, epic_id);
+                    }
+                }
+                self.modal = None;
+            }
+            Action::EpicDialogCancel => {
+                self.modal = None;
+            }
             _ => {}
         }
     }
@@ -522,6 +631,8 @@ impl App {
             Some(Modal::TaskCreate { .. }) => self.handle_task_form_key(code, modifiers),
             Some(Modal::FilterSelect { .. }) => self.handle_filter_select_key(code),
             Some(Modal::SortSelect { .. }) => self.handle_sort_select_key(code),
+            Some(Modal::StatusSelect { .. }) => self.handle_status_select_key(code),
+            Some(Modal::EpicSelect { .. }) => self.handle_epic_select_key(code),
             None => {}
         }
     }
@@ -555,6 +666,28 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => Action::SortDialogMove(-1),
             KeyCode::Enter => Action::SortDialogConfirm,
             KeyCode::Esc | KeyCode::Char('q') => Action::SortDialogCancel,
+            _ => return,
+        };
+        self.apply_action(action);
+    }
+
+    fn handle_status_select_key(&mut self, code: KeyCode) {
+        let action = match code {
+            KeyCode::Char('j') | KeyCode::Down => Action::StatusDialogMove(1),
+            KeyCode::Char('k') | KeyCode::Up => Action::StatusDialogMove(-1),
+            KeyCode::Enter => Action::StatusDialogConfirm,
+            KeyCode::Esc | KeyCode::Char('q') => Action::StatusDialogCancel,
+            _ => return,
+        };
+        self.apply_action(action);
+    }
+
+    fn handle_epic_select_key(&mut self, code: KeyCode) {
+        let action = match code {
+            KeyCode::Char('j') | KeyCode::Down => Action::EpicDialogMove(1),
+            KeyCode::Char('k') | KeyCode::Up => Action::EpicDialogMove(-1),
+            KeyCode::Enter => Action::EpicDialogConfirm,
+            KeyCode::Esc | KeyCode::Char('q') => Action::EpicDialogCancel,
             _ => return,
         };
         self.apply_action(action);
@@ -848,17 +981,6 @@ impl App {
             return;
         }
 
-        let agent_str = std::env::var("SWARMIT_AGENT").unwrap_or_else(|_| "tui-user".to_string());
-        let agent = match AgentId::new(&agent_str) {
-            Ok(a) => a,
-            Err(e) => {
-                if let Some(Modal::TaskCreate { ref mut error, .. }) = self.modal {
-                    *error = Some(format!("Invalid agent: {}", e));
-                }
-                return;
-            }
-        };
-
         let task_prefix = self
             .state
             .config
@@ -889,48 +1011,149 @@ impl App {
             Some(desc)
         };
 
-        let op = Operation::new(
-            agent,
-            OperationKind::CreateTask {
-                id: next_id,
-                title,
-                description: desc_opt,
-                priority,
-                epic_id,
-            },
-        );
+        match self.write_operation(OperationKind::CreateTask {
+            id: next_id,
+            title,
+            description: desc_opt,
+            priority,
+            epic_id,
+        }) {
+            Ok(()) => {
+                self.modal = None;
+            }
+            Err(e) => {
+                if let Some(Modal::TaskCreate { ref mut error, .. }) = self.modal {
+                    *error = Some(e);
+                }
+            }
+        }
+    }
 
+    /// Returns the task ID of the currently selected row, if it's a task.
+    pub fn selected_task_id(&self) -> Option<ItemId> {
+        match self.dashboard_rows.get(self.selected_index)? {
+            DashboardRow::Task { id } => Some(id.clone()),
+            DashboardRow::Epic { .. } => None,
+        }
+    }
+
+    /// Returns the status of the currently selected task, if any.
+    pub fn selected_task_status(&self) -> Option<Status> {
+        let task_id = self.selected_task_id()?;
+        self.state.tasks.get(&task_id).map(|t| t.status)
+    }
+
+    /// Returns the epic ID of the currently selected task, if any.
+    pub fn selected_task_epic(&self) -> Option<ItemId> {
+        let task_id = self.selected_task_id()?;
+        self.state
+            .tasks
+            .get(&task_id)
+            .and_then(|t| t.epic_id.clone())
+    }
+
+    /// Write a single operation through the lock→append→apply→snapshot path.
+    ///
+    /// Returns `Ok(())` on success, `Err(message)` on failure.
+    fn write_operation(&mut self, kind: OperationKind) -> Result<(), String> {
+        let agent_str =
+            std::env::var("SWARMIT_AGENT").unwrap_or_else(|_| "tui-user".to_string());
+        let agent = AgentId::new(&agent_str).map_err(|e| format!("Invalid agent: {}", e))?;
+
+        let op = Operation::new(agent, kind);
         let swarmit_dir = self.project_root.join(".swarmit");
         let log_path = swarmit_dir.join("operations.log");
         let lock_path = swarmit_dir.join("operations.lock");
 
-        match try_append_with_timeout(&lock_path, || append_operation(&log_path, &op)) {
-            Ok(()) => {
-                let _ = self.state.apply(op);
-                // Advance log_offset to current file size to skip the op we just wrote
-                self.log_offset = std::fs::metadata(&log_path)
-                    .map(|m| m.len())
-                    .unwrap_or(self.log_offset);
-                // Trigger auto-snapshot if threshold is met
-                let _ = swarmit_core::check_and_write_snapshot(
-                    &self.log_path,
-                    &self.snapshot_path,
-                    self.log_offset,
-                    self.snapshot_offset,
-                    &self.state,
-                );
-                if swarmit_core::state::should_snapshot(self.log_offset, self.snapshot_offset) {
-                    self.snapshot_offset = self.log_offset;
-                }
-                self.modal = None;
-                self.rebuild_dashboard_rows();
-            }
-            Err(e) => {
-                if let Some(Modal::TaskCreate { ref mut error, .. }) = self.modal {
-                    *error = Some(format!("Write failed: {}", e));
-                }
-            }
+        try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
+            .map_err(|e| format!("Write failed: {}", e))?;
+
+        let _ = self.state.apply(op);
+        self.log_offset = std::fs::metadata(&log_path)
+            .map(|m| m.len())
+            .unwrap_or(self.log_offset);
+        let _ = swarmit_core::check_and_write_snapshot(
+            &self.log_path,
+            &self.snapshot_path,
+            self.log_offset,
+            self.snapshot_offset,
+            &self.state,
+        );
+        if swarmit_core::state::should_snapshot(self.log_offset, self.snapshot_offset) {
+            self.snapshot_offset = self.log_offset;
         }
+        self.rebuild_dashboard_rows();
+        Ok(())
+    }
+
+    /// Change the status of a task, using the appropriate operation kind.
+    pub fn submit_status_change(
+        &mut self,
+        task_id: ItemId,
+        status: Status,
+    ) -> Result<(), String> {
+        let kind = match status {
+            Status::InProgress => OperationKind::ClaimTask { id: task_id },
+            Status::Done => OperationKind::CompleteTask { id: task_id },
+            _ => OperationKind::UpdateTaskStatus {
+                id: task_id,
+                status,
+            },
+        };
+        self.write_operation(kind)
+    }
+
+    /// Change the epic of a task.
+    pub fn submit_epic_change(
+        &mut self,
+        task_id: ItemId,
+        epic_id: Option<ItemId>,
+    ) -> Result<(), String> {
+        self.write_operation(OperationKind::UpdateTask {
+            id: task_id,
+            title: None,
+            description: None,
+            priority: None,
+            epic_id: Some(epic_id),
+            assignee: None,
+        })
+    }
+
+    /// Update the description of a task.
+    pub fn submit_description_update(
+        &mut self,
+        task_id: ItemId,
+        description: String,
+    ) -> Result<(), String> {
+        let desc = if description.trim().is_empty() {
+            None
+        } else {
+            Some(description)
+        };
+        self.write_operation(OperationKind::UpdateTask {
+            id: task_id,
+            title: None,
+            description: desc,
+            priority: None,
+            epic_id: None,
+            assignee: None,
+        })?;
+        // Clear highlight cache to force re-highlighting
+        self.highlight_cache = None;
+        Ok(())
+    }
+
+    /// Add a comment to a task.
+    pub fn submit_add_comment(
+        &mut self,
+        task_id: ItemId,
+        body: String,
+    ) -> Result<(), String> {
+        self.write_operation(OperationKind::AddComment {
+            id: Uuid::now_v7(),
+            task_id,
+            body,
+        })
     }
 
     /// Rebuild the flat `dashboard_rows` cache from current state.
@@ -1644,5 +1867,195 @@ mod tests {
 
         app.handle_action(Action::ResizeDetail(-5));
         assert_eq!(app.detail_width_percent, 20, "should stay at 20%");
+    }
+
+    // --- Status dialog tests ---
+
+    fn setup_app_with_task() -> (App, ItemId) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+
+        let task_id = ItemId::new("TASK", 1);
+        let _ = app.state.apply(Operation::new(
+            make_agent(),
+            OperationKind::CreateTask {
+                id: task_id.clone(),
+                title: "Test Task".to_string(),
+                description: Some("Hello world".to_string()),
+                priority: Priority::Medium,
+                epic_id: None,
+            },
+        ));
+        app.rebuild_dashboard_rows();
+        app.selected_index = 0;
+        (app, task_id)
+    }
+
+    #[test]
+    fn status_dialog_opens_with_current_status_preselected() {
+        let (mut app, _task_id) = setup_app_with_task();
+
+        app.handle_action(Action::OpenStatusDialog);
+        // Task starts as Todo which is index 0 in STATUS_OPTIONS
+        assert!(matches!(
+            app.modal,
+            Some(Modal::StatusSelect { selected_index: 0 })
+        ));
+    }
+
+    #[test]
+    fn status_dialog_noop_on_epic_row() {
+        let (mut app, _epic_id, _task_id) = setup_app_with_epic();
+        // selected_index = 0 is the epic row
+        app.handle_action(Action::OpenStatusDialog);
+        assert!(app.modal.is_none(), "should not open status dialog on epic row");
+    }
+
+    #[test]
+    fn status_dialog_navigation_wraps() {
+        let (mut app, _) = setup_app_with_task();
+        app.modal = Some(Modal::StatusSelect { selected_index: 0 });
+        app.apply_action(Action::StatusDialogMove(-1));
+        let last = crate::components::status_select::STATUS_OPTIONS.len() - 1;
+        assert!(matches!(
+            app.modal,
+            Some(Modal::StatusSelect { selected_index }) if selected_index == last
+        ));
+    }
+
+    #[test]
+    fn status_dialog_cancel_closes() {
+        let (mut app, _) = setup_app_with_task();
+        app.modal = Some(Modal::StatusSelect { selected_index: 0 });
+        app.apply_action(Action::StatusDialogCancel);
+        assert!(app.modal.is_none());
+    }
+
+    // --- Epic dialog tests ---
+
+    #[test]
+    fn epic_dialog_opens_with_none_preselected_for_orphan_task() {
+        let (mut app, _task_id) = setup_app_with_task();
+        app.handle_action(Action::OpenEpicDialog);
+        // Orphan task → current epic is None → index 0
+        assert!(matches!(
+            app.modal,
+            Some(Modal::EpicSelect { selected_index: 0 })
+        ));
+    }
+
+    #[test]
+    fn epic_dialog_opens_with_current_epic_preselected() {
+        let (mut app, _epic_id, _task_id) = setup_app_with_epic();
+        // Select the task row (index 1)
+        app.selected_index = 1;
+        app.handle_action(Action::OpenEpicDialog);
+        // Task has epic → index 1 (after "none")
+        assert!(matches!(
+            app.modal,
+            Some(Modal::EpicSelect { selected_index: 1 })
+        ));
+    }
+
+    #[test]
+    fn epic_dialog_noop_on_epic_row() {
+        let (mut app, _epic_id, _task_id) = setup_app_with_epic();
+        app.handle_action(Action::OpenEpicDialog);
+        assert!(app.modal.is_none(), "should not open epic dialog on epic row");
+    }
+
+    #[test]
+    fn epic_dialog_cancel_closes() {
+        let (mut app, _) = setup_app_with_task();
+        app.modal = Some(Modal::EpicSelect { selected_index: 0 });
+        app.apply_action(Action::EpicDialogCancel);
+        assert!(app.modal.is_none());
+    }
+
+    // --- Editor action guard tests ---
+
+    #[test]
+    fn edit_description_sets_pending_editor_when_detail_description_focused() {
+        let (mut app, task_id) = setup_app_with_task();
+        app.detail_open = true;
+        app.focus = Focus::Detail;
+        app.detail_tab = DetailTab::Description;
+
+        app.handle_action(Action::EditDescription);
+
+        assert!(app.pending_editor.is_some());
+        match app.pending_editor {
+            Some(EditorRequest::EditDescription { task_id: id, current_text }) => {
+                assert_eq!(id, task_id);
+                assert_eq!(current_text, "Hello world");
+            }
+            _ => panic!("expected EditDescription"),
+        }
+    }
+
+    #[test]
+    fn edit_description_noop_on_list_focus() {
+        let (mut app, _) = setup_app_with_task();
+        app.detail_open = true;
+        app.focus = Focus::List; // not Detail
+        app.detail_tab = DetailTab::Description;
+
+        app.handle_action(Action::EditDescription);
+        assert!(app.pending_editor.is_none());
+    }
+
+    #[test]
+    fn edit_description_noop_on_comments_tab() {
+        let (mut app, _) = setup_app_with_task();
+        app.detail_open = true;
+        app.focus = Focus::Detail;
+        app.detail_tab = DetailTab::Comments;
+
+        app.handle_action(Action::EditDescription);
+        assert!(app.pending_editor.is_none());
+    }
+
+    #[test]
+    fn add_comment_sets_pending_editor_when_detail_comments_focused() {
+        let (mut app, task_id) = setup_app_with_task();
+        app.detail_open = true;
+        app.focus = Focus::Detail;
+        app.detail_tab = DetailTab::Comments;
+
+        app.handle_action(Action::AddComment);
+
+        match app.pending_editor {
+            Some(EditorRequest::NewComment { task_id: id }) => {
+                assert_eq!(id, task_id);
+            }
+            _ => panic!("expected NewComment"),
+        }
+    }
+
+    #[test]
+    fn add_comment_noop_on_description_tab() {
+        let (mut app, _) = setup_app_with_task();
+        app.detail_open = true;
+        app.focus = Focus::Detail;
+        app.detail_tab = DetailTab::Description;
+
+        app.handle_action(Action::AddComment);
+        assert!(app.pending_editor.is_none());
+    }
+
+    // --- Write helper tests ---
+
+    #[test]
+    fn selected_task_id_returns_none_on_epic_row() {
+        let (app, _epic_id, _task_id) = setup_app_with_epic();
+        // selected_index = 0 is the epic row
+        assert!(app.selected_task_id().is_none());
+    }
+
+    #[test]
+    fn selected_task_id_returns_id_on_task_row() {
+        let (mut app, _epic_id, task_id) = setup_app_with_epic();
+        app.selected_index = 1;
+        assert_eq!(app.selected_task_id(), Some(task_id));
     }
 }

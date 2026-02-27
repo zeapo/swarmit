@@ -14,6 +14,7 @@ crossterm = { workspace = true }
 notify-debouncer-mini = { workspace = true }
 notify = { workspace = true }
 anyhow = { workspace = true }
+uuid = { workspace = true }
 catppuccin = { workspace = true }
 terminal-colorsaurus = { workspace = true }
 bat = { version = "0.26", default-features = false, features = ["regex-fancy"] }

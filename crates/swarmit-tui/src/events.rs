@@ -87,6 +87,16 @@ pub enum Action {
     SortDialogCancel,
     ResizeDetail(i8),
     SwitchDetailTab,
+    OpenStatusDialog,
+    OpenEpicDialog,
+    StatusDialogMove(i8),
+    StatusDialogConfirm,
+    StatusDialogCancel,
+    EpicDialogMove(i8),
+    EpicDialogConfirm,
+    EpicDialogCancel,
+    EditDescription,
+    AddComment,
     None,
 }
 
@@ -195,6 +205,12 @@ pub enum Modal {
         selected_index: usize,
     },
     SortSelect {
+        selected_index: usize,
+    },
+    StatusSelect {
+        selected_index: usize,
+    },
+    EpicSelect {
         selected_index: usize,
     },
 }

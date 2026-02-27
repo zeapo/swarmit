@@ -9,7 +9,7 @@ use crate::theme::Theme;
 
 /// Renders a centered help overlay on top of the current screen.
 pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
-    let popup = centered_rect(60, 28, area);
+    let popup = centered_rect(60, 33, area);
 
     f.render_widget(Clear, popup);
 
@@ -22,6 +22,11 @@ pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
         ("Space", "Toggle expand/collapse epic"),
         ("<", "Shrink detail pane"),
         (">", "Expand detail pane"),
+        ("Tab", "Switch detail tab (Desc/Comments/Insights)"),
+        ("e", "Edit description in $EDITOR (Description tab)"),
+        ("a", "Add comment in $EDITOR (Comments tab)"),
+        ("S", "Change task status"),
+        ("E", "Change task epic"),
         ("f", "Open filter dialog"),
         ("s", "Open sort dialog"),
         ("n", "Create new task"),

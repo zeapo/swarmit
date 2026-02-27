@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::App;
+use crate::app::{App, DetailTab};
 use crate::events::{Focus, Modal, Screen, TaskFormField};
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
@@ -27,6 +27,12 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                 ("Tasks".to_string(), "j/k:move  Enter:select  Esc:cancel")
             }
             Modal::SortSelect { .. } => ("Tasks".to_string(), "j/k:move  Enter:select  Esc:cancel"),
+            Modal::StatusSelect { .. } => {
+                ("Status".to_string(), "j/k:move  Enter:select  Esc:cancel")
+            }
+            Modal::EpicSelect { .. } => {
+                ("Epic".to_string(), "j/k:move  Enter:select  Esc:cancel")
+            }
         }
     } else {
         match &app.screen {
@@ -39,7 +45,17 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                 let hints = if !app.detail_open {
                     "j/k:move  l:detail  Space:expand  f:filter  s:sort  n:new  ?:help  q:quit"
                 } else if app.focus == Focus::Detail {
-                    "j/k:scroll  h:back to list  Esc:close  ?:help  q:quit"
+                    match app.detail_tab {
+                        DetailTab::Description => {
+                            "j/k:scroll  e:edit  S:status  E:epic  Tab:next  h:back"
+                        }
+                        DetailTab::Comments => {
+                            "j/k:scroll  a:comment  S:status  E:epic  Tab:next  h:back"
+                        }
+                        DetailTab::Insights => {
+                            "j/k:scroll  S:status  E:epic  Tab:next  h:back"
+                        }
+                    }
                 } else {
                     "j/k:move  l:focus detail  h/Esc:close  Space:expand  f:filter  s:sort  n:new  ?:help  q:quit"
                 };

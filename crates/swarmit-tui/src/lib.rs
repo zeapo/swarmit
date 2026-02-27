@@ -1,5 +1,6 @@
 pub mod app;
 pub mod components;
+pub mod editor;
 pub mod events;
 pub mod theme;
 
@@ -112,6 +113,11 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         let dt = now.duration_since(last_frame).as_secs_f32();
         last_frame = now;
 
+        // Handle deferred editor requests before drawing.
+        if let Some(req) = app.pending_editor.take() {
+            handle_editor_request(terminal, app, req)?;
+        }
+
         // Refresh the highlight cache before borrowing `app` immutably for the
         // draw closure.  This runs bat highlighting at most once per content
         // change rather than once per frame (~10 FPS).
@@ -208,6 +214,12 @@ pub(crate) fn render_frame(f: &mut Frame, app: &App) {
             Modal::SortSelect { selected_index } => {
                 components::sort_select::render(f, app, *selected_index, main_area)
             }
+            Modal::StatusSelect { selected_index } => {
+                components::status_select::render(f, app, *selected_index, main_area)
+            }
+            Modal::EpicSelect { selected_index } => {
+                components::epic_select::render(f, app, *selected_index, main_area)
+            }
         }
     }
 
@@ -271,6 +283,45 @@ fn key_to_action(code: KeyCode, _modifiers: KeyModifiers) -> Action {
         KeyCode::Char('<') => Action::ResizeDetail(-5),
         KeyCode::Char('>') => Action::ResizeDetail(5),
         KeyCode::Tab => Action::SwitchDetailTab,
+        KeyCode::Char('S') => Action::OpenStatusDialog,
+        KeyCode::Char('E') => Action::OpenEpicDialog,
+        KeyCode::Char('e') => Action::EditDescription,
+        KeyCode::Char('a') => Action::AddComment,
         _ => Action::None,
     }
+}
+
+/// Process a deferred editor request: suspend the TUI, open the editor,
+/// and write the resulting operation if the content changed.
+fn handle_editor_request(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+    req: app::EditorRequest,
+) -> Result<()> {
+    match req {
+        app::EditorRequest::EditDescription {
+            task_id,
+            current_text,
+        } => {
+            if let Some(new_text) = editor::open_editor_with(terminal, &current_text, "md")? {
+                if new_text != current_text {
+                    if let Err(e) = app.submit_description_update(task_id, new_text) {
+                        // Surface error briefly — next key press clears it
+                        eprintln!("swarmit: {}", e);
+                    }
+                }
+            }
+        }
+        app::EditorRequest::NewComment { task_id } => {
+            if let Some(text) = editor::open_editor_with(terminal, "", "md")? {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    if let Err(e) = app.submit_add_comment(task_id, trimmed.to_string()) {
+                        eprintln!("swarmit: {}", e);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
