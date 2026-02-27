@@ -9,19 +9,23 @@ use crate::theme::Theme;
 
 /// Renders a centered help overlay on top of the current screen.
 pub fn render(f: &mut Frame, theme: &Theme, area: Rect) {
-    let popup = centered_rect(60, 33, area);
+    let popup = centered_rect(70, 36, area);
 
     f.render_widget(Clear, popup);
 
     let keybindings: &[(&str, &str)] = &[
         ("j / ↓", "Move down / scroll detail (when detail focused)"),
         ("k / ↑", "Move up / scroll detail (when detail focused)"),
-        ("l / → / Enter", "Open detail pane / move focus to detail"),
-        ("h / ←", "Return focus to list (panel stays open)"),
+        ("l / →", "Expand epic / open detail on task / tab fwd"),
+        ("h / ←", "Collapse epic / close detail on task / tab bwd"),
+        ("Enter", "Open + focus detail pane"),
+        ("Shift+H/K", "Switch focus to list pane"),
+        ("Shift+L/J", "Switch focus to detail pane"),
         ("Esc", "Close detail pane / back / quit dialog"),
         ("Space", "Toggle expand/collapse epic"),
-        ("<", "Shrink detail pane"),
-        (">", "Expand detail pane"),
+        ("=", "Grow focused pane"),
+        ("-", "Shrink focused pane"),
+        ("|", "Toggle horizontal/vertical split"),
         ("Tab", "Switch detail tab (Desc/Comments/Insights)"),
         ("e", "Edit description in $EDITOR (Description tab)"),
         ("a", "Add comment in $EDITOR (Comments tab)"),

@@ -24,7 +24,7 @@ use ratatui::{
 };
 
 use app::App;
-use events::{Action, Modal, Screen};
+use events::{Action, Modal, Screen, SplitDirection};
 use theme::Theme;
 
 /// Creates a tracing span guard. Compiles to nothing without `profiling`.
@@ -180,18 +180,25 @@ pub(crate) fn render_frame(f: &mut Frame, app: &App) {
     match &app.screen {
         Screen::Main => {
             if app.detail_open {
-                let left_pct = 100 - app.detail_width_percent;
-                let split = Layout::horizontal([
-                    Constraint::Percentage(left_pct),
-                    Constraint::Percentage(app.detail_width_percent),
-                ])
-                .split(main_area);
+                let list_pct = 100 - app.detail_size_percent;
+                let split = match app.split_direction {
+                    SplitDirection::Horizontal => Layout::horizontal([
+                        Constraint::Percentage(list_pct),
+                        Constraint::Percentage(app.detail_size_percent),
+                    ])
+                    .split(main_area),
+                    SplitDirection::Vertical => Layout::vertical([
+                        Constraint::Percentage(list_pct),
+                        Constraint::Percentage(app.detail_size_percent),
+                    ])
+                    .split(main_area),
+                };
                 components::tree_list::render(f, app, split[0]);
-                // Right side: 1-row breadcrumb + detail pane content
-                let right = Layout::vertical([Constraint::Length(1), Constraint::Min(0)])
+                // Detail side: 1-row breadcrumb + detail pane content
+                let detail = Layout::vertical([Constraint::Length(1), Constraint::Min(0)])
                     .split(split[1]);
-                components::detail_pane::render_breadcrumb(f, app, right[0]);
-                components::detail_pane::render(f, app, right[1]);
+                components::detail_pane::render_breadcrumb(f, app, detail[0]);
+                components::detail_pane::render(f, app, detail[1]);
             } else {
                 components::tree_list::render(f, app, main_area);
             }
@@ -265,23 +272,39 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
     app.should_quit
 }
 
-fn key_to_action(code: KeyCode, _modifiers: KeyModifiers) -> Action {
+fn key_to_action(code: KeyCode, modifiers: KeyModifiers) -> Action {
+    let shift = modifiers.contains(KeyModifiers::SHIFT);
+
+    // Shift+HJKL / Shift+Arrow: pane focus switching
+    if shift {
+        match code {
+            KeyCode::Char('H') | KeyCode::Left => return Action::FocusListPane,
+            KeyCode::Char('L') | KeyCode::Right => return Action::FocusDetail,
+            KeyCode::Char('K') | KeyCode::Up => return Action::FocusListPane,
+            KeyCode::Char('J') | KeyCode::Down => return Action::FocusDetail,
+            _ => {}
+        }
+    }
+
+    // Normal bindings
     match code {
         KeyCode::Char('q') => Action::QuitRequest,
         KeyCode::Char('n') => Action::NewTask,
         KeyCode::Char('j') | KeyCode::Down => Action::Down,
         KeyCode::Char('k') | KeyCode::Up => Action::Up,
-        KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => Action::FocusRight,
+        KeyCode::Enter => Action::FocusDetail,
+        KeyCode::Char('l') | KeyCode::Right => Action::ListExpand,
+        KeyCode::Char('h') | KeyCode::Left => Action::ListCollapse,
         KeyCode::Char(' ') => Action::ToggleCollapse,
-        KeyCode::Char('h') | KeyCode::Left => Action::FocusLeft,
+        KeyCode::Char('=') => Action::ResizePane(5),
+        KeyCode::Char('-') => Action::ResizePane(-5),
+        KeyCode::Char('|') => Action::ToggleSplitDirection,
         KeyCode::Char('f') => Action::OpenFilterDialog,
         KeyCode::Char('s') => Action::OpenSortDialog,
         KeyCode::Esc => Action::Back,
         KeyCode::Char('?') => Action::Help,
         KeyCode::Char('/') => Action::Search,
         KeyCode::Char('r') => Action::Refresh,
-        KeyCode::Char('<') => Action::ResizeDetail(-5),
-        KeyCode::Char('>') => Action::ResizeDetail(5),
         KeyCode::Tab => Action::SwitchDetailTab,
         KeyCode::Char('S') => Action::OpenStatusDialog,
         KeyCode::Char('E') => Action::OpenEpicDialog,

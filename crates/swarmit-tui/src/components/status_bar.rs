@@ -43,21 +43,21 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                 };
                 let sort_label = app.dashboard_sort.label();
                 let hints = if !app.detail_open {
-                    "j/k:move  l:detail  Space:expand  f:filter  s:sort  n:new  ?:help  q:quit"
+                    "j/k:move  l:detail  h:collapse  =-:resize  |:split  f:filter  s:sort  n:new  ?:help  q:quit"
                 } else if app.focus == Focus::Detail {
                     match app.detail_tab {
                         DetailTab::Description => {
-                            "j/k:scroll  e:edit  S:status  E:epic  Tab:next  h:back"
+                            "j/k:scroll  h/l:tab  e:edit  S:status  E:epic  =-:resize  Shift+H:back"
                         }
                         DetailTab::Comments => {
-                            "j/k:scroll  a:comment  S:status  E:epic  Tab:next  h:back"
+                            "j/k:scroll  h/l:tab  a:comment  S:status  E:epic  =-:resize  Shift+H:back"
                         }
                         DetailTab::Insights => {
-                            "j/k:scroll  S:status  E:epic  Tab:next  h:back"
+                            "j/k:scroll  h/l:tab  S:status  E:epic  =-:resize  Shift+H:back"
                         }
                     }
                 } else {
-                    "j/k:move  l:focus detail  h/Esc:close  Space:expand  f:filter  s:sort  n:new  ?:help  q:quit"
+                    "j/k:move  l:expand  h:collapse  =-:resize  Shift+L:detail  |:split  Esc:close  ?:help"
                 };
                 (format!("[{}] [{}]", filter_label, sort_label), hints)
             }

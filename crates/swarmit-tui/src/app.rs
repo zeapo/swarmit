@@ -16,7 +16,7 @@ use swarmit_core::models::{AgentId, ItemId, Priority, Status};
 use swarmit_core::state::ProjectState;
 
 use crate::components::tree_list::DashboardRow;
-use crate::events::{Action, Focus, KonamiTracker, Modal, Screen, TaskFormField};
+use crate::events::{Action, Focus, KonamiTracker, Modal, Screen, SplitDirection, TaskFormField};
 use crate::theme::Theme;
 
 /// Which tab is active in the task detail pane.
@@ -230,8 +230,11 @@ pub struct App {
     /// Which tab is active in the task detail pane.
     pub detail_tab: DetailTab,
 
-    /// Width percentage for the detail pane (20-80).
-    pub detail_width_percent: u16,
+    /// Size percentage for the detail pane (20-80), axis-agnostic.
+    pub detail_size_percent: u16,
+
+    /// Whether the main split is horizontal (list|detail) or vertical (list/detail).
+    pub split_direction: SplitDirection,
 
     /// Cache for the syntax-highlighted description of the currently selected task.
     /// Tuple: (task_id, description_content, rendered_text).
@@ -321,7 +324,8 @@ impl App {
             comment_scroll: 0,
             insight_scroll: 0,
             detail_tab: DetailTab::default(),
-            detail_width_percent: 50,
+            detail_size_percent: 50,
+            split_direction: SplitDirection::default(),
             highlight_cache: None,
             highlight_tx: hl_work_tx,
             highlight_rx: hl_result_rx,
@@ -414,7 +418,7 @@ impl App {
                     }
                 }
             }
-            Action::FocusRight => {
+            Action::FocusDetail => {
                 if self.dashboard_rows.is_empty() {
                     return;
                 }
@@ -427,15 +431,9 @@ impl App {
                 self.insight_scroll = 0;
                 self.detail_tab = DetailTab::Description;
             }
-            Action::FocusLeft => {
+            Action::FocusListPane => {
                 if self.focus == Focus::Detail {
                     self.focus = Focus::List;
-                } else if self.detail_open {
-                    self.detail_open = false;
-                    self.focus = Focus::List;
-                    self.detail_scroll = 0;
-                    self.comment_scroll = 0;
-                    self.insight_scroll = 0;
                 }
             }
             Action::Help => {
@@ -464,9 +462,95 @@ impl App {
                     }
                 }
             }
-            Action::ResizeDetail(delta) => {
-                let new_width = self.detail_width_percent as i16 + delta as i16;
-                self.detail_width_percent = new_width.clamp(20, 80) as u16;
+            Action::ResizePane(delta) => {
+                // + grows the focused pane, - shrinks it
+                let effective = if self.focus == Focus::Detail { delta } else { -delta };
+                let new_size = self.detail_size_percent as i16 + effective as i16;
+                self.detail_size_percent = new_size.clamp(20, 80) as u16;
+            }
+            Action::ToggleSplitDirection => {
+                self.split_direction = match self.split_direction {
+                    SplitDirection::Horizontal => SplitDirection::Vertical,
+                    SplitDirection::Vertical => SplitDirection::Horizontal,
+                };
+            }
+            Action::ListCollapse => {
+                if self.focus == Focus::Detail {
+                    // Cycle detail tab backward
+                    self.detail_tab = match self.detail_tab {
+                        DetailTab::Description => DetailTab::Insights,
+                        DetailTab::Comments => DetailTab::Description,
+                        DetailTab::Insights => DetailTab::Comments,
+                    };
+                } else {
+                    // List focus: collapse epic or close detail pane for task rows
+                    if let Some(row) = self.dashboard_rows.get(self.selected_index) {
+                        match row {
+                            DashboardRow::Epic { id } => {
+                                let eid = id.clone();
+                                if !self.collapsed_epics.contains(&eid) {
+                                    self.collapsed_epics.insert(eid.clone());
+                                    self.rebuild_dashboard_rows();
+                                    if let Some(pos) = self
+                                        .dashboard_rows
+                                        .iter()
+                                        .position(|r| matches!(r, DashboardRow::Epic { id } if id == &eid))
+                                    {
+                                        self.selected_index = pos;
+                                    }
+                                } else if self.detail_open {
+                                    self.detail_open = false;
+                                    self.focus = Focus::List;
+                                    self.detail_scroll = 0;
+                                    self.comment_scroll = 0;
+                                    self.insight_scroll = 0;
+                                }
+                            }
+                            DashboardRow::Task { .. } => {
+                                if self.detail_open {
+                                    self.detail_open = false;
+                                    self.focus = Focus::List;
+                                    self.detail_scroll = 0;
+                                    self.comment_scroll = 0;
+                                    self.insight_scroll = 0;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Action::ListExpand => {
+                if self.focus == Focus::Detail {
+                    // Cycle detail tab forward
+                    self.detail_tab = match self.detail_tab {
+                        DetailTab::Description => DetailTab::Comments,
+                        DetailTab::Comments => DetailTab::Insights,
+                        DetailTab::Insights => DetailTab::Description,
+                    };
+                } else {
+                    // List focus: expand epic or open+focus detail for task rows
+                    if let Some(row) = self.dashboard_rows.get(self.selected_index) {
+                        match row {
+                            DashboardRow::Epic { id } => {
+                                let eid = id.clone();
+                                if self.collapsed_epics.contains(&eid) {
+                                    self.collapsed_epics.remove(&eid);
+                                    self.rebuild_dashboard_rows();
+                                }
+                            }
+                            DashboardRow::Task { .. } => {
+                                if !self.detail_open {
+                                    self.detail_open = true;
+                                }
+                                self.focus = Focus::Detail;
+                                self.detail_scroll = 0;
+                                self.comment_scroll = 0;
+                                self.insight_scroll = 0;
+                                self.detail_tab = DetailTab::Description;
+                            }
+                        }
+                    }
+                }
             }
             Action::SwitchDetailTab => {
                 if self.focus == Focus::Detail {
@@ -1632,13 +1716,13 @@ mod tests {
     }
 
     #[test]
-    fn focus_right_opens_detail_and_sets_focus_detail() {
+    fn focus_detail_opens_detail_and_sets_focus_detail() {
         let (mut app, _, _) = setup_app_with_epic();
 
         assert!(!app.detail_open);
         assert_eq!(app.focus, Focus::List);
 
-        app.handle_action(Action::FocusRight);
+        app.handle_action(Action::FocusDetail);
 
         assert!(app.detail_open);
         assert_eq!(app.focus, Focus::Detail);
@@ -1646,42 +1730,40 @@ mod tests {
     }
 
     #[test]
-    fn focus_right_noop_on_empty_list() {
+    fn focus_detail_noop_on_empty_list() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
 
         assert!(app.dashboard_rows.is_empty());
-        app.handle_action(Action::FocusRight);
+        app.handle_action(Action::FocusDetail);
         assert!(!app.detail_open);
         assert_eq!(app.focus, Focus::List);
     }
 
     #[test]
-    fn focus_left_returns_focus_to_list() {
+    fn focus_list_pane_returns_focus_to_list() {
         let (mut app, _, _) = setup_app_with_epic();
 
         app.detail_open = true;
         app.focus = Focus::Detail;
 
-        app.handle_action(Action::FocusLeft);
+        app.handle_action(Action::FocusListPane);
 
-        assert!(app.detail_open, "panel stays open after FocusLeft");
+        assert!(app.detail_open, "panel stays open after FocusListPane");
         assert_eq!(app.focus, Focus::List);
     }
 
     #[test]
-    fn focus_left_closes_pane_when_already_on_list() {
+    fn focus_list_pane_noop_when_already_on_list() {
         let (mut app, _, _) = setup_app_with_epic();
 
         app.detail_open = true;
         app.focus = Focus::List;
-        app.detail_scroll = 2;
 
-        app.handle_action(Action::FocusLeft);
+        app.handle_action(Action::FocusListPane);
 
-        assert!(!app.detail_open, "second h closes the pane");
+        assert!(app.detail_open, "FocusListPane does not close pane");
         assert_eq!(app.focus, Focus::List);
-        assert_eq!(app.detail_scroll, 0);
     }
 
     #[test]
@@ -1732,8 +1814,8 @@ mod tests {
     fn back_invariant_focus_always_list_when_detail_closed() {
         let (mut app, _, _) = setup_app_with_epic();
 
-        // Open via FocusRight, then close via Back
-        app.handle_action(Action::FocusRight);
+        // Open via FocusDetail, then close via Back
+        app.handle_action(Action::FocusDetail);
         assert_eq!(app.focus, Focus::Detail);
 
         app.handle_action(Action::Back);
@@ -1861,37 +1943,44 @@ mod tests {
     }
 
     #[test]
-    fn resize_detail_adjusts_width() {
+    fn resize_pane_grows_focused_pane() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
 
-        assert_eq!(app.detail_width_percent, 50, "default is 50%");
+        assert_eq!(app.detail_size_percent, 50, "default is 50%");
 
-        app.handle_action(Action::ResizeDetail(5));
-        assert_eq!(app.detail_width_percent, 55);
+        // Focus on detail: + grows detail
+        app.focus = Focus::Detail;
+        app.handle_action(Action::ResizePane(5));
+        assert_eq!(app.detail_size_percent, 55);
 
-        app.handle_action(Action::ResizeDetail(-10));
-        assert_eq!(app.detail_width_percent, 45);
+        // Focus on list: + grows list (shrinks detail)
+        app.focus = Focus::List;
+        app.handle_action(Action::ResizePane(5));
+        assert_eq!(app.detail_size_percent, 50);
     }
 
     #[test]
-    fn resize_detail_clamps_to_20_80_range() {
+    fn resize_pane_clamps_to_20_80_range() {
         let dir = tempfile::tempdir().unwrap();
         let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
 
-        app.detail_width_percent = 78;
-        app.handle_action(Action::ResizeDetail(5));
-        assert_eq!(app.detail_width_percent, 80, "should clamp at 80%");
+        // Grow detail past max
+        app.focus = Focus::Detail;
+        app.detail_size_percent = 78;
+        app.handle_action(Action::ResizePane(5));
+        assert_eq!(app.detail_size_percent, 80, "should clamp at 80%");
 
-        app.handle_action(Action::ResizeDetail(5));
-        assert_eq!(app.detail_width_percent, 80, "should stay at 80%");
+        app.handle_action(Action::ResizePane(5));
+        assert_eq!(app.detail_size_percent, 80, "should stay at 80%");
 
-        app.detail_width_percent = 23;
-        app.handle_action(Action::ResizeDetail(-5));
-        assert_eq!(app.detail_width_percent, 20, "should clamp at 20%");
+        // Shrink detail past min
+        app.detail_size_percent = 23;
+        app.handle_action(Action::ResizePane(-5));
+        assert_eq!(app.detail_size_percent, 20, "should clamp at 20%");
 
-        app.handle_action(Action::ResizeDetail(-5));
-        assert_eq!(app.detail_width_percent, 20, "should stay at 20%");
+        app.handle_action(Action::ResizePane(-5));
+        assert_eq!(app.detail_size_percent, 20, "should stay at 20%");
     }
 
     // --- Status dialog tests ---
@@ -2082,5 +2171,97 @@ mod tests {
         let (mut app, _epic_id, task_id) = setup_app_with_epic();
         app.selected_index = 1;
         assert_eq!(app.selected_task_id(), Some(task_id));
+    }
+
+    // --- Split direction tests ---
+
+    #[test]
+    fn toggle_split_direction() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Theme::detect()).unwrap();
+
+        assert_eq!(app.split_direction, SplitDirection::Horizontal);
+
+        app.handle_action(Action::ToggleSplitDirection);
+        assert_eq!(app.split_direction, SplitDirection::Vertical);
+
+        app.handle_action(Action::ToggleSplitDirection);
+        assert_eq!(app.split_direction, SplitDirection::Horizontal);
+    }
+
+    // --- ListCollapse / ListExpand tests ---
+
+    #[test]
+    fn list_collapse_collapses_epic_on_list_focus() {
+        let (mut app, epic_id, _task_id) = setup_app_with_epic();
+        app.focus = Focus::List;
+        app.selected_index = 0; // epic row
+        assert_eq!(app.dashboard_rows.len(), 2);
+
+        app.handle_action(Action::ListCollapse);
+
+        assert!(app.collapsed_epics.contains(&epic_id));
+        assert_eq!(app.dashboard_rows.len(), 1);
+    }
+
+    #[test]
+    fn list_expand_expands_epic_on_list_focus() {
+        let (mut app, epic_id, _task_id) = setup_app_with_epic();
+        app.focus = Focus::List;
+        app.selected_index = 0;
+        app.collapsed_epics.insert(epic_id.clone());
+        app.rebuild_dashboard_rows();
+        assert_eq!(app.dashboard_rows.len(), 1);
+
+        app.handle_action(Action::ListExpand);
+
+        assert!(!app.collapsed_epics.contains(&epic_id));
+        assert_eq!(app.dashboard_rows.len(), 2);
+    }
+
+    #[test]
+    fn list_expand_opens_detail_on_task_row() {
+        let (mut app, _) = setup_app_with_task();
+        app.focus = Focus::List;
+        assert!(!app.detail_open);
+
+        app.handle_action(Action::ListExpand);
+
+        assert!(app.detail_open);
+        assert_eq!(app.focus, Focus::Detail);
+    }
+
+    #[test]
+    fn list_collapse_closes_detail_on_task_row() {
+        let (mut app, _) = setup_app_with_task();
+        app.detail_open = true;
+        app.focus = Focus::List;
+
+        app.handle_action(Action::ListCollapse);
+
+        assert!(!app.detail_open);
+        assert_eq!(app.focus, Focus::List);
+    }
+
+    #[test]
+    fn list_collapse_cycles_tab_backward_in_detail_focus() {
+        let (mut app, _) = setup_app_with_task();
+        app.detail_open = true;
+        app.focus = Focus::Detail;
+        app.detail_tab = DetailTab::Comments;
+
+        app.handle_action(Action::ListCollapse);
+        assert_eq!(app.detail_tab, DetailTab::Description);
+    }
+
+    #[test]
+    fn list_expand_cycles_tab_forward_in_detail_focus() {
+        let (mut app, _) = setup_app_with_task();
+        app.detail_open = true;
+        app.focus = Focus::Detail;
+        app.detail_tab = DetailTab::Description;
+
+        app.handle_action(Action::ListExpand);
+        assert_eq!(app.detail_tab, DetailTab::Comments);
     }
 }

@@ -62,13 +62,21 @@ pub enum Focus {
     Detail,
 }
 
+/// Whether the main split runs horizontally (list|detail) or vertically (list/detail).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SplitDirection {
+    #[default]
+    Horizontal,
+    Vertical,
+}
+
 /// User input actions, decoupled from raw key events.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Up,
     Down,
-    FocusRight,
-    FocusLeft,
+    FocusDetail,
+    FocusListPane,
     Back,
     Quit,
     QuitRequest,
@@ -77,6 +85,9 @@ pub enum Action {
     Search,
     Refresh,
     ToggleCollapse,
+    ListCollapse,
+    ListExpand,
+    ToggleSplitDirection,
     OpenFilterDialog,
     FilterDialogMove(i8),
     FilterDialogConfirm,
@@ -85,7 +96,7 @@ pub enum Action {
     SortDialogMove(i8),
     SortDialogConfirm,
     SortDialogCancel,
-    ResizeDetail(i8),
+    ResizePane(i8),
     SwitchDetailTab,
     OpenStatusDialog,
     OpenEpicDialog,
