@@ -23,7 +23,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use app::App;
+use app::{App, ScrollRegions};
 use events::{Action, Modal, Screen, SplitDirection};
 use theme::Theme;
 
@@ -126,10 +126,14 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             app.refresh_highlight_cache();
         }
 
-        // Draw frame
+        // Draw frame and capture layout rects for mouse hit-testing.
         {
             let _g = prof_guard!("terminal_draw");
-            terminal.draw(|f| render_frame(f, app))?;
+            let mut regions = ScrollRegions::default();
+            terminal.draw(|f| {
+                regions = render_frame(f, app);
+            })?;
+            app.scroll_regions = regions;
         }
 
         // Poll for keyboard events (100ms timeout = ~10fps)
@@ -139,10 +143,25 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         };
 
         if has_event {
-            if let Event::Key(key) = event::read()? {
-                if handle_key(app, key.code, key.modifiers) {
-                    return Ok(());
+            match event::read()? {
+                Event::Key(key) => {
+                    if handle_key(app, key.code, key.modifiers) {
+                        return Ok(());
+                    }
                 }
+                Event::Mouse(mouse) => {
+                    use crossterm::event::MouseEventKind;
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => {
+                            app.handle_mouse_scroll(mouse.column, mouse.row, true);
+                        }
+                        MouseEventKind::ScrollDown => {
+                            app.handle_mouse_scroll(mouse.column, mouse.row, false);
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -167,7 +186,9 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
 /// Render one full frame of the TUI into the given `Frame`.
 ///
 /// Extracted from `run_loop` so that tests can call it with a `TestBackend`.
-pub(crate) fn render_frame(f: &mut Frame, app: &App) {
+/// Returns the layout `ScrollRegions` captured during this frame so the caller
+/// can store them on `app.scroll_regions` for mouse hit-testing.
+pub(crate) fn render_frame(f: &mut Frame, app: &App) -> ScrollRegions {
     let size = f.area();
 
     // Reserve bottom row for status bar
@@ -175,6 +196,8 @@ pub(crate) fn render_frame(f: &mut Frame, app: &App) {
 
     let main_area = chunks[0];
     let status_area = chunks[1];
+
+    let mut regions = ScrollRegions::default();
 
     // Render current screen
     match &app.screen {
@@ -193,18 +216,22 @@ pub(crate) fn render_frame(f: &mut Frame, app: &App) {
                     ])
                     .split(main_area),
                 };
+                regions.list = split[0];
                 components::tree_list::render(f, app, split[0]);
                 // Detail side: 1-row breadcrumb + detail pane content
                 let detail = Layout::vertical([Constraint::Length(1), Constraint::Min(0)])
                     .split(split[1]);
                 components::detail_pane::render_breadcrumb(f, app, detail[0]);
                 components::detail_pane::render(f, app, detail[1]);
+                regions.detail_content = detail[1];
             } else {
+                regions.list = main_area;
                 components::tree_list::render(f, app, main_area);
             }
         }
         Screen::Help => {
             // Render tree underneath help overlay
+            regions.list = main_area;
             components::tree_list::render(f, app, main_area);
             components::help::render(f, &app.theme, main_area);
         }
@@ -216,9 +243,21 @@ pub(crate) fn render_frame(f: &mut Frame, app: &App) {
             Modal::QuitConfirm => components::quit_confirm::render(f, &app.theme, main_area),
             Modal::TaskCreate { .. } => components::task_create::render(f, app, main_area),
             Modal::FilterSelect { selected_index } => {
+                let popup = components::help::centered_rect(
+                    24,
+                    (app::FILTER_OPTIONS.len() as u16) + 2,
+                    main_area,
+                );
+                regions.modal_popup = Some(popup);
                 components::filter_select::render(f, app, *selected_index, main_area)
             }
             Modal::SortSelect { selected_index } => {
+                let popup = components::help::centered_rect(
+                    28,
+                    (app::SORT_OPTIONS.len() as u16) + 2,
+                    main_area,
+                );
+                regions.modal_popup = Some(popup);
                 components::sort_select::render(f, app, *selected_index, main_area)
             }
             Modal::StatusSelect { selected_index } => {
@@ -238,6 +277,8 @@ pub(crate) fn render_frame(f: &mut Frame, app: &App) {
     }
 
     components::status_bar::render(f, app, status_area);
+
+    regions
 }
 
 /// Process a single key event through the full input pipeline.

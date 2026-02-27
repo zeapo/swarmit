@@ -328,7 +328,7 @@ impl TuiTestHarness {
     /// Render the current app state into the test terminal buffer.
     fn render(&mut self) {
         self.terminal
-            .draw(|f| render_frame(f, &self.app))
+            .draw(|f| { render_frame(f, &self.app); })
             .expect("render frame in test harness");
     }
 }

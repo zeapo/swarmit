@@ -6,6 +6,7 @@ use std::time::Duration;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
+use ratatui::layout::Rect;
 use ratatui::text::Text;
 use uuid::Uuid;
 
@@ -170,6 +171,14 @@ pub enum EditorRequest {
     },
 }
 
+/// Layout rectangles captured during `terminal.draw()` for mouse hit-testing.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ScrollRegions {
+    pub list: Rect,
+    pub detail_content: Rect,
+    pub modal_popup: Option<Rect>,
+}
+
 /// Central application state.
 pub struct App {
     pub state: ProjectState,
@@ -253,6 +262,9 @@ pub struct App {
 
     /// Deferred editor request — consumed by the run loop before each draw.
     pub pending_editor: Option<EditorRequest>,
+
+    /// Layout rectangles captured each frame for mouse scroll hit-testing.
+    pub scroll_regions: ScrollRegions,
 }
 
 impl App {
@@ -332,6 +344,7 @@ impl App {
             crab_animation: None,
             konami_tracker: KonamiTracker::new(),
             pending_editor: None,
+            scroll_regions: ScrollRegions::default(),
         };
         app.rebuild_dashboard_rows();
         Ok(app)
@@ -1408,6 +1421,60 @@ impl App {
     pub fn update_crab_animation(&mut self, dt: f32) {
         if let Some(ref mut anim) = self.crab_animation {
             anim.update(dt);
+        }
+    }
+
+    /// Handle a mouse scroll event at terminal cell (`col`, `row`).
+    /// `up` is `true` for scroll-up (wheel up / finger swipe down on trackpad).
+    pub fn handle_mouse_scroll(&mut self, col: u16, row: u16, up: bool) {
+        let pos_in = |r: Rect| {
+            col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+        };
+
+        // Ignore scroll during crab animation or help screen
+        if self.crab_animation.is_some() || matches!(self.screen, Screen::Help) {
+            return;
+        }
+
+        // Modal open: only scroll within the modal popup rect
+        if self.modal.is_some() {
+            if let Some(popup) = self.scroll_regions.modal_popup {
+                if pos_in(popup) {
+                    let delta: i8 = if up { -1 } else { 1 };
+                    let action = match &self.modal {
+                        Some(Modal::FilterSelect { .. }) => Action::FilterDialogMove(delta),
+                        Some(Modal::SortSelect { .. }) => Action::SortDialogMove(delta),
+                        _ => return,
+                    };
+                    self.apply_action(action);
+                }
+            }
+            return;
+        }
+
+        // No modal: hit-test main panels
+        if pos_in(self.scroll_regions.list) {
+            if up { self.move_up(); } else { self.move_down(); }
+            if self.detail_open {
+                self.detail_scroll = 0;
+                self.comment_scroll = 0;
+                self.detail_tab = DetailTab::Description;
+            }
+        } else if self.detail_open && pos_in(self.scroll_regions.detail_content) {
+            match self.detail_tab {
+                DetailTab::Description => {
+                    if up { self.detail_scroll = self.detail_scroll.saturating_sub(1); }
+                    else { self.detail_scroll += 1; }
+                }
+                DetailTab::Comments => {
+                    if up { self.comment_scroll = self.comment_scroll.saturating_sub(1); }
+                    else { self.comment_scroll += 1; }
+                }
+                DetailTab::Insights => {
+                    if up { self.insight_scroll = self.insight_scroll.saturating_sub(1); }
+                    else { self.insight_scroll += 1; }
+                }
+            }
         }
     }
 }
