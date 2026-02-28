@@ -1,17 +1,14 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
-use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
 use ratatui::layout::Rect;
 use ratatui::text::Text;
+use rusqlite::Connection;
 use uuid::Uuid;
 
-use crate::events::locking::try_append_with_timeout;
-use crate::events::log::{append_operation, read_operations_since};
 use crate::events::operations::{Operation, OperationKind};
 use crate::models::{AgentId, ItemId, Priority, Status};
 use crate::state::ProjectState;
@@ -191,18 +188,11 @@ pub struct App {
     // Navigation: index of selected item in the tree list.
     pub selected_index: usize,
 
-    // File watcher for live refresh.
-    watcher_rx: Option<Receiver<DebounceEventResult>>,
-    // Suppress the Drop warning — the watcher must be kept alive.
-    _debouncer: Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>>,
+    // SQLite connection for reading/writing operations.
+    conn: Connection,
+    /// Latest rowid from the operations table, for incremental polling.
+    last_rowid: i64,
 
-    // Byte offset for incremental log reads.
-    pub log_offset: u64,
-
-    pub log_path: PathBuf,
-    pub snapshot_path: PathBuf,
-    /// Byte offset at which the last snapshot was taken.
-    pub snapshot_offset: u64,
     pub should_quit: bool,
 
     // Search/filter string (future).
@@ -271,26 +261,9 @@ pub struct App {
 
 impl App {
     pub fn new(project_root: PathBuf, theme: Theme) -> Result<Self> {
-        let log_path = project_root.join(".swarmit").join("operations.log");
-        let snapshot_path = project_root.join(".swarmit/state.snap");
-
-        let (state, log_offset) = crate::load_state(&project_root)?;
-        let snapshot_offset = crate::state::read_snapshot(&snapshot_path)
-            .ok()
-            .flatten()
-            .map(|s| s.log_offset)
-            .unwrap_or(0);
-
-        let (tx, rx) = mpsc::channel();
-
-        let mut debouncer = new_debouncer(Duration::from_millis(200), tx)?;
-
-        if log_path.exists() {
-            use notify::RecursiveMode;
-            debouncer
-                .watcher()
-                .watch(&log_path, RecursiveMode::NonRecursive)?;
-        }
+        let conn = crate::open_db(&project_root)?;
+        let state = crate::load_state(&conn)?;
+        let last_rowid = crate::latest_rowid(&conn).unwrap_or(0);
 
         let (hl_work_tx, hl_work_rx) = mpsc::channel::<HighlightRequest>();
         let (hl_result_tx, hl_result_rx) = mpsc::channel::<HighlightResult>();
@@ -319,12 +292,8 @@ impl App {
             project_root,
             theme,
             selected_index: 0,
-            watcher_rx: Some(rx),
-            _debouncer: Some(debouncer),
-            log_offset,
-            log_path,
-            snapshot_path,
-            snapshot_offset,
+            conn,
+            last_rowid,
             should_quit: false,
             search_query: String::new(),
             modal: None,
@@ -1078,7 +1047,7 @@ impl App {
             .and_then(|t| t.epic_id.clone())
     }
 
-    /// Write a single operation through the lock→append→apply→snapshot path.
+    /// Write a single operation through SQLite.
     ///
     /// Returns `Ok(())` on success, `Err(message)` on failure.
     fn write_operation(&mut self, kind: OperationKind) -> Result<(), String> {
@@ -1086,27 +1055,17 @@ impl App {
         let agent = AgentId::new(&agent_str).map_err(|e| format!("Invalid agent: {}", e))?;
 
         let op = Operation::new(agent, kind);
-        let swarmit_dir = self.project_root.join(".swarmit");
-        let log_path = swarmit_dir.join("operations.log");
-        let lock_path = swarmit_dir.join("operations.lock");
 
-        try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
-            .map_err(|e| format!("Write failed: {}", e))?;
+        crate::write_operation(&self.conn, &op).map_err(|e| format!("Write failed: {}", e))?;
 
-        let _ = self.state.apply(op);
-        self.log_offset = std::fs::metadata(&log_path)
-            .map(|m| m.len())
-            .unwrap_or(self.log_offset);
-        let _ = crate::check_and_write_snapshot(
-            &self.log_path,
-            &self.snapshot_path,
-            self.log_offset,
-            self.snapshot_offset,
-            &self.state,
-        );
-        if crate::state::should_snapshot(self.log_offset, self.snapshot_offset) {
-            self.snapshot_offset = self.log_offset;
+        if let Err(e) = self.state.apply(op) {
+            // Write succeeded in SQLite; reload full state as fallback so UI stays consistent.
+            eprintln!("Warning: in-memory apply failed ({}), reloading from DB", e);
+            if let Ok(fresh) = crate::load_state(&self.conn) {
+                self.state = fresh;
+            }
         }
+        self.last_rowid = crate::latest_rowid(&self.conn).unwrap_or(self.last_rowid);
         self.rebuild_dashboard_rows();
         Ok(())
     }
@@ -1315,23 +1274,23 @@ impl App {
         }
     }
 
-    /// Poll the file watcher channel and apply any new operations.
+    /// Poll the SQLite operations table for new operations from external writers.
     pub fn poll_log_changes(&mut self) {
         crate::prof_guard!("poll_log_changes");
-        let Some(rx) = &self.watcher_rx else { return };
 
-        // Drain all pending events (non-blocking).
-        while rx.try_recv().is_ok() {
-            // Events are batched by the debouncer; one drain is enough.
+        // Check if there are new rows since our last known rowid.
+        let current_rowid = crate::latest_rowid(&self.conn).unwrap_or(self.last_rowid);
+        if current_rowid <= self.last_rowid {
+            return;
         }
 
-        // Read new operations from the last known byte offset.
-        if let Ok((new_ops, new_offset)) = read_operations_since(&self.log_path, self.log_offset) {
+        if let Ok((new_ops, new_rowid)) = crate::read_operations_since(&self.conn, self.last_rowid)
+        {
             if !new_ops.is_empty() {
                 for op in new_ops {
                     let _ = self.state.apply(op);
                 }
-                self.log_offset = new_offset;
+                self.last_rowid = new_rowid;
                 self.rebuild_dashboard_rows();
             }
         }

@@ -5,10 +5,10 @@
 ```
 src/
   main.rs          # Binary entry point (mode detection)
-  lib.rs           # Public API, re-exports, load_state(), check_and_write_snapshot()
+  lib.rs           # Public API, re-exports from state::db
   models/          # Domain types: Task, Epic, ItemId, Status, etc.
-  events/          # Event sourcing: Operation, append, locking
-  state/           # Materializer, snapshot, index, markdown sync
+  events/          # Event sourcing: Operation, OperationKind
+  state/           # DB layer, materializer, index, markdown sync
   cli/             # CLI commands (clap)
     mod.rs         # Cli struct, Commands enum, run()
     output.rs      # JSON envelope, OutputMode
@@ -32,7 +32,7 @@ Single crate — no workspace. Published to crates.io as `swarmit`.
 
 ```bash
 cargo build          # Build
-cargo test           # Run all 123 tests
+cargo test           # Run all 124 tests
 cargo run -- --help  # CLI help
 just check           # fmt + lint + test
 just publish         # Full publish to crates.io
@@ -46,17 +46,32 @@ warnings are treated as errors.
 
 ## Architecture
 
-**Event sourcing:** All mutations write an `Operation` (JSONL line) to `.swarmit/operations.log`.
-State is rebuilt by replaying the log. The write path:
-1. Acquire `fd-lock` on `operations.lock` (5s timeout, 10ms retry)
-2. Append serialized `Operation` as a JSONL line
-3. `fsync` for durability
-4. Release lock
+**Single SQLite database:** All state lives in `.swarmit/state.db` (WAL mode, `busy_timeout=5000`).
+Every mutation is a single `BEGIN IMMEDIATE` transaction that atomically:
+1. INSERTs the `Operation` into the `operations` table
+2. Updates materialized state tables via `apply_to_db()`
 
-**Materializer:** `ProjectState::from_log()` replays all operations. `apply()` is the state machine.
-`BTreeMap` for deterministic ordering. Incremental reads via `read_operations_since(offset)`.
+No separate log file or lock file. SQLite WAL + `busy_timeout` handles concurrency.
 
-**IDs:** `ItemId` in PREFIX-NNN format (e.g., `TASK-001`). Sequence counters tracked in `ProjectState.epic_seq` / `task_seq`.
+**Tables:** `migrations`, `operations` (event log), `config`, `epics`, `epic_task_ids`,
+`tasks`, `relationships`, `comments`, `insights`, `sequences` (materialized state).
+
+**Public API** (re-exported from `src/state/db.rs` via `src/lib.rs`):
+- `open_db(project_root)` — open/create DB, run migrations, import legacy if needed
+- `load_state(conn)` — SELECT from materialized tables → `ProjectState`
+- `write_operation(conn, op)` / `write_operations(conn, ops)` — atomic write
+- `read_operations_since(conn, after_rowid)` — incremental read for TUI polling
+- `read_all_operations(conn)` / `latest_rowid(conn)` / `compact_db(conn)`
+
+**Materializer:** `ProjectState::apply()` is the in-memory state machine.
+`apply_to_db()` mirrors it in SQL. `BTreeMap` for deterministic ordering.
+
+**IDs:** `ItemId` in PREFIX-NNN format (e.g., `TASK-001`). Sequence counters tracked in
+the `sequences` table and `ProjectState.epic_seq` / `task_seq`.
+
+**Legacy migration:** On first `open_db()`, if `operations.log` exists it is imported into
+the `operations` table and renamed to `.bak`. Old v1 snapshot DBs (with `meta` table) are
+also backed up and recreated.
 
 **CLI dispatch:** `src/cli/mod.rs` matches `&cli.command` (by reference to avoid partial moves).
 All command `run()` functions take `&XxxArgs, &Cli`.
@@ -77,8 +92,8 @@ All command `run()` functions take `&XxxArgs, &Cli`.
 | File | Purpose |
 |------|---------|
 | `src/events/operations.rs` | All `OperationKind` variants |
-| `src/state/materializer.rs` | `ProjectState::apply()` — the state machine |
-| `src/events/locking.rs` | `fd-lock` write path |
+| `src/state/db.rs` | SQLite layer: open, read, write, migrate |
+| `src/state/materializer.rs` | `ProjectState::apply()` — the in-memory state machine |
 | `src/cli/commands/` | One file per command group |
 | `src/tui/app.rs` | TUI `App` struct + event loop state |
 | `src/tui/mod.rs` | TUI entry point + keyboard dispatch |
@@ -87,8 +102,19 @@ All command `run()` functions take `&XxxArgs, &Cli`.
 
 1. Add variant to `OperationKind` in `src/events/operations.rs`
 2. Handle it in `ProjectState::apply()` in `src/state/materializer.rs`
-3. Add a unit test in the `tests` block of `materializer.rs`
-4. Wire up the CLI command if needed
+3. Handle it in `apply_to_db()` in `src/state/db.rs`
+4. Add unit tests in both `materializer.rs` and `db.rs`
+5. Wire up the CLI command if needed
+
+## Changing the Database Schema
+
+The database (`.swarmit/state.db`) is the single source of truth. When modifying
+any stored struct (`ProjectConfig`, `Task`, `Epic`, `Comment`, `Insight`, `Relationship`):
+
+1. Add a new migration in `run_migrations()` in `src/state/db.rs`
+2. Update the corresponding `read_*` and `apply_to_db()` functions in `db.rs`
+3. Add `#[serde(default)]` on the corresponding Rust field (for operations JSON compat)
+4. Add a test verifying the new field round-trips through write/load
 
 ## Output Format
 
@@ -111,7 +137,7 @@ The `exclude` list in `Cargo.toml` keeps docs, IDE files, and `.swarmit/` out of
 
 **Use swarmit instead of Claude Code's built-in todo tools.**
 Never use `TodoWrite`, `TaskCreate`, `TaskUpdate`, or `TaskList` in this project.
-All task tracking goes through the swarmit CLI so it persists to `.swarmit/operations.log`
+All task tracking goes through the swarmit CLI so it persists to `.swarmit/state.db`
 and is visible to all agents and the TUI.
 
 | Instead of | Use |

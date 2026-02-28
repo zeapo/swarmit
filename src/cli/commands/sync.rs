@@ -20,7 +20,8 @@ pub fn run(args: &SyncArgs, cli: &Cli) -> Result<()> {
     let root = require_project_root(cli)?;
     let swarmit = root.join(".swarmit");
 
-    let (state, _log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let conn = crate::open_db(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let state = crate::load_state(&conn).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let state_dir: PathBuf = if let Some(p) = &args.path {
         PathBuf::from(p)

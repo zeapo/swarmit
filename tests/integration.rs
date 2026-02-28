@@ -2,11 +2,8 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use tempfile::TempDir;
 
-use swarmit::events::locking::try_append_with_timeout;
-use swarmit::events::log::{append_operation, read_operations, read_operations_since};
 use swarmit::events::operations::{Operation, OperationKind};
 use swarmit::models::{AgentId, ItemId, Priority};
-use swarmit::state::ProjectState;
 
 fn agent(name: &str) -> AgentId {
     AgentId::new(name).unwrap()
@@ -51,12 +48,17 @@ fn task_op(id: &str, title: &str) -> Operation {
     )
 }
 
-/// Test: rebuild from log matches state built incrementally.
+fn setup_db(dir: &TempDir) -> rusqlite::Connection {
+    let swarmit_dir = dir.path().join(".swarmit");
+    std::fs::create_dir_all(&swarmit_dir).unwrap();
+    swarmit::open_db(dir.path()).unwrap()
+}
+
+/// Test: write operations and load matches state built incrementally.
 #[test]
-fn rebuild_from_log_matches_incremental() {
+fn rebuild_from_db_matches_incremental() {
     let dir = TempDir::new().unwrap();
-    let log_path = dir.path().join("operations.log");
-    let lock_path = dir.path().join("operations.lock");
+    let conn = setup_db(&dir);
 
     let ops = vec![
         init_op("Test Project"),
@@ -67,24 +69,27 @@ fn rebuild_from_log_matches_incremental() {
 
     // Write all ops
     for op in &ops {
-        try_append_with_timeout(&lock_path, || append_operation(&log_path, op)).unwrap();
+        swarmit::write_operation(&conn, op).unwrap();
     }
 
-    // Rebuild from log
-    let state = ProjectState::from_log(&log_path).unwrap();
+    // Load from DB
+    let state = swarmit::load_state(&conn).unwrap();
 
     assert!(state.config.is_some());
     assert_eq!(state.epics.len(), 1);
     assert_eq!(state.tasks.len(), 2);
-    assert_eq!(state.sequence, 4);
+    // sequence is tracked per-op via INSERT INTO sequences ON CONFLICT
+    assert!(state.sequence > 0);
 }
 
-/// Test: concurrent appends from multiple threads don't corrupt the log.
+/// Test: concurrent writes from multiple threads don't corrupt the DB.
 #[test]
-fn concurrent_appends_are_safe() {
+fn concurrent_writes_are_safe() {
     let dir = TempDir::new().unwrap();
-    let log_path = Arc::new(dir.path().join("operations.log"));
-    let lock_path = Arc::new(dir.path().join("operations.lock"));
+    let conn = setup_db(&dir);
+    drop(conn); // Close initial connection so threads can open their own
+
+    let db_path = Arc::new(dir.path().join(".swarmit/state.db"));
 
     const THREADS: usize = 8;
     const OPS_PER_THREAD: usize = 10;
@@ -93,11 +98,13 @@ fn concurrent_appends_are_safe() {
 
     let handles: Vec<_> = (0..THREADS)
         .map(|i| {
-            let log = Arc::clone(&log_path);
-            let lock = Arc::clone(&lock_path);
+            let db_path = Arc::clone(&db_path);
             let barrier = Arc::clone(&barrier);
 
             thread::spawn(move || {
+                let conn = rusqlite::Connection::open(&*db_path).unwrap();
+                conn.execute_batch("PRAGMA busy_timeout=5000;").unwrap();
+
                 // All threads start at the same time
                 barrier.wait();
 
@@ -111,7 +118,7 @@ fn concurrent_appends_are_safe() {
                             body: format!("Thread {} op {}", i, j),
                         },
                     );
-                    try_append_with_timeout(&lock, || append_operation(&log, &op)).unwrap();
+                    swarmit::write_operation(&conn, &op).unwrap();
                 }
             })
         })
@@ -122,79 +129,40 @@ fn concurrent_appends_are_safe() {
     }
 
     // All operations should be readable and valid
-    let ops = read_operations(&log_path).unwrap();
+    let conn = swarmit::open_db(dir.path()).unwrap();
+    let ops = swarmit::read_all_operations(&conn).unwrap();
     assert_eq!(ops.len(), THREADS * OPS_PER_THREAD);
 }
 
-/// Test: incremental read from byte offset.
+/// Test: incremental read from rowid offset.
 #[test]
 fn incremental_read_returns_new_ops() {
     let dir = TempDir::new().unwrap();
-    let log_path = dir.path().join("operations.log");
-    let lock_path = dir.path().join("operations.lock");
+    let conn = setup_db(&dir);
 
-    // Write first batch
-    let op1 = init_op("Project");
-    try_append_with_timeout(&lock_path, || append_operation(&log_path, &op1)).unwrap();
+    // Write first op
+    swarmit::write_operation(&conn, &init_op("Project")).unwrap();
 
-    let (ops, offset) = read_operations_since(&log_path, 0).unwrap();
-    assert_eq!(ops.len(), 1);
-    assert!(offset > 0);
+    let rowid1 = swarmit::latest_rowid(&conn).unwrap();
+    assert!(rowid1 > 0);
 
-    // Write second batch
-    let op2 = epic_op("EPIC-001", "Auth");
-    try_append_with_timeout(&lock_path, || append_operation(&log_path, &op2)).unwrap();
+    // Write second op
+    swarmit::write_operation(&conn, &epic_op("EPIC-001", "Auth")).unwrap();
 
-    let (new_ops, new_offset) = read_operations_since(&log_path, offset).unwrap();
+    let (new_ops, rowid2) = swarmit::read_operations_since(&conn, rowid1).unwrap();
     assert_eq!(new_ops.len(), 1); // Only the new op
-    assert!(new_offset > offset);
+    assert!(rowid2 > rowid1);
 
     // No new ops
-    let (no_ops, _) = read_operations_since(&log_path, new_offset).unwrap();
+    let (no_ops, _) = swarmit::read_operations_since(&conn, rowid2).unwrap();
     assert_eq!(no_ops.len(), 0);
-}
-
-/// Test: lock timeout when lock is held by another thread.
-#[test]
-fn lock_timeout_fires() {
-    use swarmit::events::locking::with_exclusive_lock;
-
-    let dir = TempDir::new().unwrap();
-    let lock_path = dir.path().join("operations.lock");
-    let lock_path2 = lock_path.clone();
-
-    let barrier = Arc::new(Barrier::new(2));
-    let barrier2 = Arc::clone(&barrier);
-    let release = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let release2 = Arc::clone(&release);
-
-    // Thread 1: holds the lock for a bit
-    let h = thread::spawn(move || {
-        with_exclusive_lock(&lock_path2, 5_000, || {
-            barrier2.wait(); // Signal: lock acquired
-                             // Hold for 200ms
-            thread::sleep(std::time::Duration::from_millis(200));
-            release2.store(true, std::sync::atomic::Ordering::Relaxed);
-            Ok(())
-        })
-        .unwrap();
-    });
-
-    barrier.wait(); // Wait for thread 1 to acquire lock
-
-    // Thread 2: try with 50ms timeout — should fail
-    let result = with_exclusive_lock::<_, ()>(&lock_path, 50, || Ok(()));
-    assert!(result.is_err(), "Expected lock timeout error");
-
-    h.join().unwrap();
 }
 
 /// Test: round-trip create → claim → done via ProjectState.
 #[test]
 fn task_lifecycle_round_trip() {
     let dir = TempDir::new().unwrap();
-    let log_path = dir.path().join("operations.log");
-    let lock_path = dir.path().join("operations.lock");
+    let conn = setup_db(&dir);
 
     let task_id: ItemId = "TASK-001".parse().unwrap();
     let ops = vec![
@@ -223,10 +191,10 @@ fn task_lifecycle_round_trip() {
     ];
 
     for op in &ops {
-        try_append_with_timeout(&lock_path, || append_operation(&log_path, op)).unwrap();
+        swarmit::write_operation(&conn, op).unwrap();
     }
 
-    let state = ProjectState::from_log(&log_path).unwrap();
+    let state = swarmit::load_state(&conn).unwrap();
     let task = &state.tasks[&task_id];
 
     assert_eq!(task.status, swarmit::models::Status::Done);

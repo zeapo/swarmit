@@ -1,8 +1,6 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use crate::events::locking::try_append_with_timeout;
-use crate::events::log::append_operation;
 use crate::events::operations::{Operation, OperationKind};
 use crate::models::AgentId;
 
@@ -63,7 +61,8 @@ pub fn run(args: &ProjectArgs, cli: &Cli) -> Result<()> {
 
 fn show(_args: &ProjectShowArgs, cli: &Cli) -> Result<()> {
     let root = require_project_root(cli)?;
-    let (state, _log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let conn = crate::open_db(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let state = crate::load_state(&conn).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let config = state
         .config
@@ -118,12 +117,9 @@ fn update(args: &ProjectUpdateArgs, cli: &Cli) -> Result<()> {
     let agent = AgentId::new(&agent_str).map_err(|e| anyhow::anyhow!("{}", e))?;
     let root = require_project_root(cli)?;
     let swarmit = root.join(".swarmit");
-    let log_path = swarmit.join("operations.log");
-    let lock_path = swarmit.join("operations.lock");
-    let snapshot_path = swarmit.join("state.snap");
 
-    // Verify project is initialized
-    let (state, log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let conn = crate::open_db(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let state = crate::load_state(&conn).map_err(|e| anyhow::anyhow!("{}", e))?;
     let config = state
         .config
         .as_ref()
@@ -144,24 +140,14 @@ fn update(args: &ProjectUpdateArgs, cli: &Cli) -> Result<()> {
         },
     );
 
-    try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    crate::write_operation(&conn, &op).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Regenerate project.toml to keep it in sync
-    let (post_state, _) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let post_state = crate::load_state(&conn).map_err(|e| anyhow::anyhow!("{}", e))?;
     if let Some(updated_config) = &post_state.config {
         let toml = toml_serialize(updated_config)?;
         std::fs::write(swarmit.join("project.toml"), toml)?;
     }
-
-    let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
-    let _ = crate::check_and_write_snapshot(
-        &log_path,
-        &snapshot_path,
-        log_len,
-        log_offset,
-        &post_state,
-    );
 
     let new_name = args.name.as_deref().unwrap_or(&config.name);
     let mode = OutputMode::detect(cli.json, cli.plain);

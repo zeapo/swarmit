@@ -2,22 +2,19 @@
 /// (avoids spawning the binary in tests, keeping them fast and hermetic).
 use tempfile::TempDir;
 
-use swarmit::events::locking::try_append_with_timeout;
-use swarmit::events::log::append_operation;
 use swarmit::events::operations::{Operation, OperationKind};
 use swarmit::models::{AgentId, ItemId, Priority, Status};
-use swarmit::state::{write_snapshot, ProjectState, SnapshotV1};
 
 fn agent() -> AgentId {
     AgentId::new("test-agent").unwrap()
 }
 
-fn setup_project(dir: &TempDir) -> (std::path::PathBuf, std::path::PathBuf) {
-    let swarmit = dir.path().join(".swarmit");
-    std::fs::create_dir_all(swarmit.join("state").join("epics")).unwrap();
-    std::fs::create_dir_all(swarmit.join("state").join("backlog")).unwrap();
-    let log = swarmit.join("operations.log");
-    let lock = swarmit.join("operations.lock");
+fn setup_project(dir: &TempDir) -> rusqlite::Connection {
+    let swarmit_dir = dir.path().join(".swarmit");
+    std::fs::create_dir_all(swarmit_dir.join("state").join("epics")).unwrap();
+    std::fs::create_dir_all(swarmit_dir.join("state").join("backlog")).unwrap();
+
+    let conn = swarmit::open_db(dir.path()).unwrap();
 
     let init_op = Operation::new(
         agent(),
@@ -30,91 +27,83 @@ fn setup_project(dir: &TempDir) -> (std::path::PathBuf, std::path::PathBuf) {
             materialize_path: None,
         },
     );
-    try_append_with_timeout(&lock, || append_operation(&log, &init_op)).unwrap();
-    (log, lock)
+    swarmit::write_operation(&conn, &init_op).unwrap();
+    conn
 }
 
 /// Full lifecycle: create epic → create task → claim → done
 #[test]
 fn full_task_lifecycle() {
     let dir = TempDir::new().unwrap();
-    let (log, lock) = setup_project(&dir);
+    let conn = setup_project(&dir);
 
     let epic_id: ItemId = "EPIC-001".parse().unwrap();
     let task_id: ItemId = "TASK-001".parse().unwrap();
 
     // Create epic
-    try_append_with_timeout(&lock, || {
-        append_operation(
-            &log,
-            &Operation::new(
-                agent(),
-                OperationKind::CreateEpic {
-                    id: epic_id.clone(),
-                    title: "Auth System".to_string(),
-                    description: Some("User authentication".to_string()),
-                    priority: Priority::High,
-                },
-            ),
-        )
-    })
+    swarmit::write_operation(
+        &conn,
+        &Operation::new(
+            agent(),
+            OperationKind::CreateEpic {
+                id: epic_id.clone(),
+                title: "Auth System".to_string(),
+                description: Some("User authentication".to_string()),
+                priority: Priority::High,
+            },
+        ),
+    )
     .unwrap();
 
     // Create task under epic
-    try_append_with_timeout(&lock, || {
-        append_operation(
-            &log,
-            &Operation::new(
-                agent(),
-                OperationKind::CreateTask {
-                    id: task_id.clone(),
-                    title: "OAuth2 login".to_string(),
-                    description: None,
-                    priority: Priority::High,
-                    epic_id: Some(epic_id.clone()),
-                },
-            ),
-        )
-    })
+    swarmit::write_operation(
+        &conn,
+        &Operation::new(
+            agent(),
+            OperationKind::CreateTask {
+                id: task_id.clone(),
+                title: "OAuth2 login".to_string(),
+                description: None,
+                priority: Priority::High,
+                epic_id: Some(epic_id.clone()),
+            },
+        ),
+    )
     .unwrap();
 
-    let state = ProjectState::from_log(&log).unwrap();
+    let state = swarmit::load_state(&conn).unwrap();
     assert_eq!(state.tasks[&task_id].status, Status::Todo);
     assert_eq!(state.epics[&epic_id].task_ids.len(), 1);
 
     // Claim
-    try_append_with_timeout(&lock, || {
-        append_operation(
-            &log,
-            &Operation::new(
-                agent(),
-                OperationKind::ClaimTask {
-                    id: task_id.clone(),
-                },
-            ),
-        )
-    })
+    swarmit::write_operation(
+        &conn,
+        &Operation::new(
+            agent(),
+            OperationKind::ClaimTask {
+                id: task_id.clone(),
+            },
+        ),
+    )
     .unwrap();
 
-    let state = ProjectState::from_log(&log).unwrap();
+    let state = swarmit::load_state(&conn).unwrap();
     assert_eq!(state.tasks[&task_id].status, Status::InProgress);
     assert_eq!(state.tasks[&task_id].assignee, Some(agent()));
 
     // Done
-    try_append_with_timeout(&lock, || {
-        append_operation(
-            &log,
-            &Operation::new(
-                agent(),
-                OperationKind::CompleteTask {
-                    id: task_id.clone(),
-                },
-            ),
-        )
-    })
+    swarmit::write_operation(
+        &conn,
+        &Operation::new(
+            agent(),
+            OperationKind::CompleteTask {
+                id: task_id.clone(),
+            },
+        ),
+    )
     .unwrap();
 
-    let state = ProjectState::from_log(&log).unwrap();
+    let state = swarmit::load_state(&conn).unwrap();
     assert_eq!(state.tasks[&task_id].status, Status::Done);
     assert!(state.tasks[&task_id].completed_at.is_some());
 }
@@ -138,79 +127,37 @@ fn json_envelope_format() {
     assert_eq!(parsed["error"], "Not found");
 }
 
-/// Corrupted log recovery: a partial trailing line should be skipped.
+/// Relationship inverse is automatically created.
 #[test]
-fn corrupted_log_recovery() {
-    use std::io::Write;
-
+fn relationship_inverse_created() {
     let dir = TempDir::new().unwrap();
-    let (log, lock) = setup_project(&dir);
+    let conn = setup_project(&dir);
 
-    // Write a valid operation
-    try_append_with_timeout(&lock, || {
-        append_operation(
-            &log,
+    let t1: ItemId = "TASK-001".parse().unwrap();
+    let t2: ItemId = "TASK-002".parse().unwrap();
+
+    for (id, title) in [(&t1, "Task 1"), (&t2, "Task 2")] {
+        swarmit::write_operation(
+            &conn,
             &Operation::new(
                 agent(),
                 OperationKind::CreateTask {
-                    id: "TASK-001".parse().unwrap(),
-                    title: "Valid task".to_string(),
+                    id: id.clone(),
+                    title: title.to_string(),
                     description: None,
                     priority: Priority::Medium,
                     epic_id: None,
                 },
             ),
         )
-    })
-    .unwrap();
-
-    // Corrupt the log by appending a partial line
-    let mut file = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
-    file.write_all(b"{\"corrupted\": true, \"incomplete\":")
-        .unwrap();
-    drop(file);
-
-    // Should still read the valid operations successfully
-    let state = ProjectState::from_log(&log).unwrap();
-    assert_eq!(state.tasks.len(), 1);
-    assert!(state
-        .tasks
-        .contains_key(&"TASK-001".parse::<ItemId>().unwrap()));
-}
-
-/// Relationship inverse is automatically created.
-#[test]
-fn relationship_inverse_created() {
-    let dir = TempDir::new().unwrap();
-    let (log, lock) = setup_project(&dir);
-
-    let t1: ItemId = "TASK-001".parse().unwrap();
-    let t2: ItemId = "TASK-002".parse().unwrap();
-
-    for (id, title) in [(&t1, "Task 1"), (&t2, "Task 2")] {
-        try_append_with_timeout(&lock, || {
-            append_operation(
-                &log,
-                &Operation::new(
-                    agent(),
-                    OperationKind::CreateTask {
-                        id: id.clone(),
-                        title: title.to_string(),
-                        description: None,
-                        priority: Priority::Medium,
-                        epic_id: None,
-                    },
-                ),
-            )
-        })
         .unwrap();
     }
 
-    // Add blocks relationship (link.rs also adds the inverse — simulate that here)
-    try_append_with_timeout(&lock, || {
-        append_operation(
-            &log,
-            &Operation::new(
+    // Add blocks relationship + inverse (simulating what link.rs does)
+    swarmit::write_operations(
+        &conn,
+        &[
+            Operation::new(
                 agent(),
                 OperationKind::AddRelationship {
                     from: t1.clone(),
@@ -218,10 +165,7 @@ fn relationship_inverse_created() {
                     rel_type: swarmit::models::RelationType::Blocks,
                 },
             ),
-        )?;
-        append_operation(
-            &log,
-            &Operation::new(
+            Operation::new(
                 agent(),
                 OperationKind::AddRelationship {
                     from: t2.clone(),
@@ -229,11 +173,11 @@ fn relationship_inverse_created() {
                     rel_type: swarmit::models::RelationType::BlockedBy,
                 },
             ),
-        )
-    })
+        ],
+    )
     .unwrap();
 
-    let state = ProjectState::from_log(&log).unwrap();
+    let state = swarmit::load_state(&conn).unwrap();
     assert_eq!(state.relationships.len(), 2);
 
     let t1_rels = state.relationships_for(&t1);
@@ -251,49 +195,45 @@ fn relationship_inverse_created() {
 #[test]
 fn insight_roundtrip() {
     let dir = TempDir::new().unwrap();
-    let (log, lock) = setup_project(&dir);
+    let conn = setup_project(&dir);
 
     let task_id: ItemId = "TASK-001".parse().unwrap();
 
     // Create task
-    try_append_with_timeout(&lock, || {
-        append_operation(
-            &log,
-            &Operation::new(
-                agent(),
-                OperationKind::CreateTask {
-                    id: task_id.clone(),
-                    title: "Refactor auth".to_string(),
-                    description: None,
-                    priority: Priority::Medium,
-                    epic_id: None,
-                },
-            ),
-        )
-    })
+    swarmit::write_operation(
+        &conn,
+        &Operation::new(
+            agent(),
+            OperationKind::CreateTask {
+                id: task_id.clone(),
+                title: "Refactor auth".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            },
+        ),
+    )
     .unwrap();
 
     // Add insight
     let insight_id = uuid::Uuid::now_v7();
-    try_append_with_timeout(&lock, || {
-        append_operation(
-            &log,
-            &Operation::new(
-                agent(),
-                OperationKind::AddInsight {
-                    id: insight_id,
-                    task_id: task_id.clone(),
-                    file_path: "src/auth.rs".to_string(),
-                    before_snippet: Some("fn old_login()".to_string()),
-                    after_snippet: Some("fn login() -> Result<()>".to_string()),
-                    body: "Improved error handling".to_string(),
-                },
-            ),
-        )
-    })
+    swarmit::write_operation(
+        &conn,
+        &Operation::new(
+            agent(),
+            OperationKind::AddInsight {
+                id: insight_id,
+                task_id: task_id.clone(),
+                file_path: "src/auth.rs".to_string(),
+                before_snippet: Some("fn old_login()".to_string()),
+                after_snippet: Some("fn login() -> Result<()>".to_string()),
+                body: "Improved error handling".to_string(),
+            },
+        ),
+    )
     .unwrap();
 
-    let state = ProjectState::from_log(&log).unwrap();
+    let state = swarmit::load_state(&conn).unwrap();
     let insights = state.insights_for(&task_id);
     assert_eq!(insights.len(), 1);
     assert_eq!(insights[0].id, insight_id);
@@ -323,24 +263,21 @@ fn self_link_rejected() {
     assert!(err.to_string().contains("TASK-001"));
 }
 
-/// Compaction: snapshot file is written and log is truncated, state survives.
+/// Compaction: operations are deleted, state tables survive.
 #[test]
 fn compaction_preserves_state() {
     let dir = TempDir::new().unwrap();
-    let (log, _lock) = setup_project(&dir);
-    let swarmit_dir = log.parent().unwrap();
-    let bak = swarmit_dir.join("operations.log.bak");
-    let snapshot_path = swarmit_dir.join("state.snap");
+    let conn = setup_project(&dir);
 
     // Write some tasks
     for i in 1..=5u32 {
         let task_id = ItemId::new("TASK", i);
-        append_operation(
-            &log,
+        swarmit::write_operation(
+            &conn,
             &Operation::new(
                 agent(),
                 OperationKind::CreateTask {
-                    id: task_id.clone(),
+                    id: task_id,
                     title: format!("Task {}", i),
                     description: None,
                     priority: Priority::Medium,
@@ -351,43 +288,17 @@ fn compaction_preserves_state() {
         .unwrap();
     }
 
-    let before = ProjectState::from_log(&log).unwrap();
+    let before = swarmit::load_state(&conn).unwrap();
     assert_eq!(before.tasks.len(), 5);
-    let original_log_size = std::fs::metadata(&log).unwrap().len();
 
-    // Simulate compaction (same logic as compact.rs --truncate)
-    let log_len = std::fs::metadata(&log).unwrap().len();
-    let state = ProjectState::from_log(&log).unwrap();
-    write_snapshot(
-        &snapshot_path,
-        &SnapshotV1 {
-            log_offset: log_len,
-            state,
-        },
-    )
-    .unwrap();
+    // Compact: delete operations, keep state
+    swarmit::compact_db(&conn).unwrap();
 
-    // Backup and truncate the log
-    std::fs::copy(&log, &bak).unwrap();
-    std::fs::write(&log, b"").unwrap();
+    // Operations should be gone
+    let ops = swarmit::read_all_operations(&conn).unwrap();
+    assert!(ops.is_empty());
 
-    // Rewrite snapshot with offset 0 since the log is now empty
-    if let Ok(Some(mut snap)) = swarmit::state::read_snapshot(&snapshot_path) {
-        snap.log_offset = 0;
-        write_snapshot(&snapshot_path, &snap).unwrap();
-    }
-
-    // Backup exists
-    assert!(bak.exists());
-
-    // Truncated log is empty (smaller than original)
-    let compacted_size = std::fs::metadata(&log).unwrap().len();
-    assert!(compacted_size < original_log_size);
-
-    // State from the snapshot has all 5 tasks preserved
-    let snap = swarmit::state::read_snapshot(&snapshot_path)
-        .unwrap()
-        .unwrap();
-    assert_eq!(snap.state.tasks.len(), 5);
-    assert_eq!(snap.log_offset, 0);
+    // State tables should still have data
+    let after = swarmit::load_state(&conn).unwrap();
+    assert_eq!(after.tasks.len(), 5);
 }

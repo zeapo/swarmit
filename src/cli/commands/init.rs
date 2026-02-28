@@ -4,8 +4,6 @@ use clap::Args;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::events::locking::try_append_with_timeout;
-use crate::events::log::append_operation;
 use crate::events::operations::{Operation, OperationKind};
 use crate::models::{AgentId, ProjectConfig};
 use crate::state::ProjectState;
@@ -58,8 +56,8 @@ pub fn run(args: &InitArgs, cli: &Cli) -> Result<()> {
 
     fs::create_dir_all(&swarmit_dir)?;
 
-    let log_path = swarmit_dir.join("operations.log");
-    let lock_path = swarmit_dir.join("operations.lock");
+    // Open the DB (creates schema)
+    let conn = crate::open_db(&project_root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Write the init operation
     let auto_mat = if args.auto_materialize {
@@ -79,8 +77,7 @@ pub fn run(args: &InitArgs, cli: &Cli) -> Result<()> {
         },
     );
 
-    try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    crate::write_operation(&conn, &op).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Write project.toml
     let config = ProjectConfig {

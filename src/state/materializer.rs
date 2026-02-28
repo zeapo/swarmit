@@ -1,9 +1,7 @@
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::events::log::read_operations;
 use crate::events::operations::{Operation, OperationKind};
 use crate::models::{
     AgentId, Comment, Epic, Insight, ItemId, ProjectConfig, Relationship, Result, Status,
@@ -30,16 +28,6 @@ pub struct ProjectState {
 impl ProjectState {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Rebuilds state by replaying all operations in the log.
-    pub fn from_log(log_path: &Path) -> Result<Self> {
-        let ops = read_operations(log_path)?;
-        let mut state = Self::new();
-        for op in ops {
-            state.apply(op)?;
-        }
-        Ok(state)
     }
 
     /// Applies a single operation, mutating state in place.
@@ -231,8 +219,8 @@ impl ProjectState {
                 // Keep epic.task_ids in sync when the task's epic changes.
                 if let Some(new_eid_opt) = new_epic_id {
                     // Remove from old epic's task list.
-                    if let Some(old_eid) = old_epic_id {
-                        if let Some(epic) = self.epics.get_mut(&old_eid) {
+                    if let Some(ref old_eid) = old_epic_id {
+                        if let Some(epic) = self.epics.get_mut(old_eid) {
                             epic.task_ids.retain(|tid| tid != &id);
                         }
                     }
@@ -249,6 +237,10 @@ impl ProjectState {
                             }
                         }
                         self.check_epic_completion(new_eid, op.timestamp);
+                    }
+                    // Check old epic completion (task removed may cause auto-close).
+                    if let Some(old_eid) = &old_epic_id {
+                        self.check_epic_completion(old_eid, op.timestamp);
                     }
                 }
             }

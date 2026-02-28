@@ -1,8 +1,6 @@
 use anyhow::Result;
 use clap::Args;
 
-use crate::events::log::read_operations;
-
 use crate::cli::output::{print_json_ok, OutputMode};
 use crate::cli::Cli;
 
@@ -25,13 +23,24 @@ pub struct LogArgs {
 
 pub fn run(args: &LogArgs, cli: &Cli) -> Result<()> {
     let root = require_project_root(cli)?;
-    let log_path = root.join(".swarmit").join("operations.log");
 
-    let all_ops = read_operations(&log_path).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let conn = crate::open_db(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let all_ops = crate::read_all_operations(&conn).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let since_dt = args
+        .since
+        .as_deref()
+        .map(|s| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .map_err(|e| anyhow::anyhow!("Invalid --since timestamp: {e}"))
+        })
+        .transpose()?;
 
     let ops: Vec<_> = all_ops
         .iter()
         .filter(|op| args.agent.as_deref().is_none_or(|a| op.agent.as_str() == a))
+        .filter(|op| since_dt.is_none_or(|dt| op.timestamp >= dt))
         .rev()
         .take(args.tail)
         .collect();
