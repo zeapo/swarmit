@@ -191,7 +191,7 @@ fn list(args: &EpicListArgs, cli: &Cli) -> Result<()> {
                 println!("No epics found.");
                 return Ok(());
             }
-            println!("{:<12} {:<8} {:<8} {}", "ID", "STATUS", "PRIORITY", "TITLE");
+            println!("{:<12} {:<8} {:<8} TITLE", "ID", "STATUS", "PRIORITY");
             println!("{}", "-".repeat(60));
             for e in &epics {
                 println!(

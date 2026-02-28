@@ -70,10 +70,9 @@ pub fn run(project_root: &Path) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Application state
-    let mut app = App::new(project_root.to_path_buf(), theme).map_err(|e| {
+    let mut app = App::new(project_root.to_path_buf(), theme).inspect_err(|_e| {
         // Restore terminal before propagating error
         let _ = restore_terminal();
-        e
     })?;
 
     // Eagerly deserialize bat's bundled SyntaxSet (~989 KB bincode) so that
@@ -106,7 +105,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
     let mut last_frame = Instant::now();
 
     loop {
-        let _frame_guard = prof_guard!("frame");
+        prof_guard!("frame");
 
         // Compute dt for smooth animation regardless of frame rate.
         let now = Instant::now();
@@ -122,13 +121,13 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         // draw closure.  This runs bat highlighting at most once per content
         // change rather than once per frame (~10 FPS).
         {
-            let _g = prof_guard!("refresh_highlight_cache");
+            prof_guard!("refresh_highlight_cache");
             app.refresh_highlight_cache();
         }
 
         // Draw frame and capture layout rects for mouse hit-testing.
         {
-            let _g = prof_guard!("terminal_draw");
+            prof_guard!("terminal_draw");
             let mut regions = ScrollRegions::default();
             terminal.draw(|f| {
                 regions = render_frame(f, app);
@@ -138,7 +137,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
 
         // Poll for keyboard events (100ms timeout = ~10fps)
         let has_event = {
-            let _g = prof_guard!("event_poll");
+            prof_guard!("event_poll");
             event::poll(Duration::from_millis(100))?
         };
 
@@ -167,17 +166,13 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
 
         // Advance and auto-expire the crab animation.
         app.update_crab_animation(dt);
-        if app
-            .crab_animation
-            .as_ref()
-            .map_or(false, |a| a.is_expired())
-        {
+        if app.crab_animation.as_ref().is_some_and(|a| a.is_expired()) {
             app.crab_animation = None;
         }
 
         // Poll file watcher for live refresh
         {
-            let _g = prof_guard!("poll_log_changes");
+            prof_guard!("poll_log_changes");
             app.poll_log_changes();
         }
     }
@@ -293,7 +288,7 @@ pub(super) fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
     }
 
     {
-        let _g = prof_guard!("handle_key");
+        prof_guard!("handle_key");
         if app.crab_animation.is_some() {
             // Any keypress dismisses the crab parade.
             app.crab_animation = None;

@@ -236,13 +236,13 @@ fn list(args: &TaskListArgs, cli: &Cli) -> Result<()> {
         .tasks
         .values()
         .filter(|t| {
-            status_filter.map_or(true, |s| t.status == s)
+            status_filter.is_none_or(|s| t.status == s)
                 && epic_filter
                     .as_ref()
-                    .map_or(true, |eid| t.epic_id.as_ref() == Some(eid))
+                    .is_none_or(|eid| t.epic_id.as_ref() == Some(eid))
                 && assignee_filter
                     .as_ref()
-                    .map_or(true, |a| t.assignee.as_ref() == Some(a))
+                    .is_none_or(|a| t.assignee.as_ref() == Some(a))
         })
         .collect();
 
@@ -270,8 +270,8 @@ fn list(args: &TaskListArgs, cli: &Cli) -> Result<()> {
                 return Ok(());
             }
             println!(
-                "{:<12} {:<12} {:<8} {:<8} {}",
-                "ID", "ASSIGNEE", "STATUS", "PRIORITY", "TITLE"
+                "{:<12} {:<12} {:<8} {:<8} TITLE",
+                "ID", "ASSIGNEE", "STATUS", "PRIORITY"
             );
             println!("{}", "-".repeat(70));
             for t in &tasks {

@@ -31,11 +31,7 @@ pub fn run(args: &LogArgs, cli: &Cli) -> Result<()> {
 
     let ops: Vec<_> = all_ops
         .iter()
-        .filter(|op| {
-            args.agent
-                .as_deref()
-                .map_or(true, |a| op.agent.as_str() == a)
-        })
+        .filter(|op| args.agent.as_deref().is_none_or(|a| op.agent.as_str() == a))
         .rev()
         .take(args.tail)
         .collect();

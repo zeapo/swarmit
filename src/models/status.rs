@@ -2,9 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Task/Epic status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord, Default,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
+    #[default]
     Todo,
     InProgress,
     Done,
@@ -39,17 +42,14 @@ impl fmt::Display for Status {
     }
 }
 
-impl Default for Status {
-    fn default() -> Self {
-        Status::Todo
-    }
-}
-
 /// Work item priority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord, Default,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Priority {
     Low,
+    #[default]
     Medium,
     High,
     Urgent,
@@ -69,12 +69,6 @@ impl Priority {
 impl fmt::Display for Priority {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.display_name())
-    }
-}
-
-impl Default for Priority {
-    fn default() -> Self {
-        Priority::Medium
     }
 }
 

@@ -28,7 +28,7 @@ thread_local! {
 /// moves the ~989 KB bincode deserialization cost to a predictable moment
 /// rather than the first time a task detail is opened.
 pub fn warm_up_syntax() {
-    let _guard = crate::prof_guard!("warm_up_syntax");
+    crate::prof_guard!("warm_up_syntax");
     ASSETS.with(|a| {
         let _ = a.get_syntax_set();
     });
@@ -37,7 +37,7 @@ pub fn warm_up_syntax() {
 /// Render `content` as syntax-highlighted markdown using bat's bundled
 /// syntax definitions and themes. Falls back to plain text on any error.
 pub(crate) fn highlight_markdown(content: &str, bat_theme: &str) -> Text<'static> {
-    let _guard = crate::prof_guard!("highlight_markdown");
+    crate::prof_guard!("highlight_markdown");
     ASSETS.with(|assets| {
         let ss = match assets.get_syntax_set() {
             Ok(ss) => ss,
@@ -58,9 +58,7 @@ pub(crate) fn highlight_markdown(content: &str, bat_theme: &str) -> Text<'static
                     let spans: Vec<Span<'static>> = ranges
                         .iter()
                         .map(|(style, text)| {
-                            let owned = text
-                                .trim_end_matches(|c: char| c == '\n' || c == '\r')
-                                .to_owned();
+                            let owned = text.trim_end_matches(['\n', '\r']).to_owned();
                             let fg = Color::Rgb(
                                 style.foreground.r,
                                 style.foreground.g,
@@ -73,9 +71,7 @@ pub(crate) fn highlight_markdown(content: &str, bat_theme: &str) -> Text<'static
                     lines.push(Line::from(spans));
                 }
                 Err(_) => lines.push(Line::from(
-                    line_str
-                        .trim_end_matches(|c: char| c == '\n' || c == '\r')
-                        .to_owned(),
+                    line_str.trim_end_matches(['\n', '\r']).to_owned(),
                 )),
             }
         }
@@ -115,7 +111,7 @@ pub fn render_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
 }
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
-    let _guard = crate::prof_guard!("detail_pane::render");
+    crate::prof_guard!("detail_pane::render");
     let theme = &app.theme;
 
     let selected = app.dashboard_rows.get(app.selected_index);
@@ -137,7 +133,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
-    let _guard = crate::prof_guard!("detail_pane::render_task");
+    crate::prof_guard!("detail_pane::render_task");
     let theme = &app.theme;
     let border = if app.focus == Focus::Detail {
         theme.focused_border_style()
@@ -384,7 +380,7 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
 }
 
 fn render_epic(f: &mut Frame, app: &App, area: Rect, epic_id: &ItemId) {
-    let _guard = crate::prof_guard!("detail_pane::render_epic");
+    crate::prof_guard!("detail_pane::render_epic");
     let theme = &app.theme;
     let border = if app.focus == Focus::Detail {
         theme.focused_border_style()

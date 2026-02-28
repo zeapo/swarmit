@@ -19,6 +19,12 @@ pub struct KonamiTracker {
     progress: usize,
 }
 
+impl Default for KonamiTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KonamiTracker {
     pub fn new() -> Self {
         Self { progress: 0 }

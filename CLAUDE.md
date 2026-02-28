@@ -40,9 +40,9 @@ just publish         # Full publish to crates.io
 
 Tests use `tempfile` for isolated directories — no global state.
 
-**Always run `just fmt` after writing code.** The project uses standard `rustfmt`
-formatting. Before committing, run `just fmt-check` to verify — CI will reject
-unformatted code. The `just check` recipe includes this automatically.
+**Always run `just check` after writing code.** This runs `fmt-check` + `clippy` + `test`
+in sequence. Fix any errors before committing. Clippy runs with `-D warnings` so all
+warnings are treated as errors.
 
 ## Architecture
 

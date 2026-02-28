@@ -18,6 +18,7 @@ pub struct TuiTestHarness {
     _dir: tempfile::TempDir,
 }
 
+#[allow(dead_code)]
 impl TuiTestHarness {
     /// Create a harness with an empty project and an 80×24 terminal.
     pub fn new() -> Self {
@@ -228,7 +229,7 @@ impl TuiTestHarness {
 
     pub fn assert_crab_active(&mut self) -> &mut Self {
         assert!(
-            self.app.crab_animation.as_ref().map_or(false, |a| a.active),
+            self.app.crab_animation.as_ref().is_some_and(|a| a.active),
             "expected crab animation to be active"
         );
         self

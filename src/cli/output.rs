@@ -16,9 +16,7 @@ impl OutputMode {
     pub fn detect(force_json: bool, force_plain: bool) -> Self {
         if force_json {
             OutputMode::Json
-        } else if force_plain {
-            OutputMode::Pretty
-        } else if std::io::stdout().is_terminal() {
+        } else if force_plain || std::io::stdout().is_terminal() {
             OutputMode::Pretty
         } else {
             OutputMode::Json

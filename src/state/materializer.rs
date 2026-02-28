@@ -355,7 +355,7 @@ impl ProjectState {
         let all_done = epic.task_ids.iter().all(|tid| {
             self.tasks
                 .get(tid)
-                .map_or(false, |t| t.status == Status::Done)
+                .is_some_and(|t| t.status == Status::Done)
         });
         if all_done {
             if let Some(epic) = self.epics.get_mut(epic_id) {

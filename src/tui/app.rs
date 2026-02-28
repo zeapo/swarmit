@@ -806,11 +806,9 @@ impl App {
                 }
                 KeyCode::Enter => {
                     self.submit_task_create();
-                    return;
                 }
                 KeyCode::Char('s') if modifiers.contains(KeyModifiers::CONTROL) => {
                     self.submit_task_create();
-                    return;
                 }
                 KeyCode::Esc => {
                     let has_content =
@@ -820,7 +818,6 @@ impl App {
                     } else {
                         self.modal = None;
                     }
-                    return;
                 }
                 _ => {}
             },
@@ -903,7 +900,6 @@ impl App {
                 }
                 KeyCode::Char('s') if modifiers.contains(KeyModifiers::CONTROL) => {
                     self.submit_task_create();
-                    return;
                 }
                 KeyCode::Esc => {
                     let has_content =
@@ -913,7 +909,6 @@ impl App {
                     } else {
                         self.modal = None;
                     }
-                    return;
                 }
                 _ => {}
             },
@@ -936,11 +931,9 @@ impl App {
                 }
                 KeyCode::Enter => {
                     self.submit_task_create();
-                    return;
                 }
                 KeyCode::Char('s') if modifiers.contains(KeyModifiers::CONTROL) => {
                     self.submit_task_create();
-                    return;
                 }
                 KeyCode::Esc => {
                     let has_content =
@@ -950,7 +943,6 @@ impl App {
                     } else {
                         self.modal = None;
                     }
-                    return;
                 }
                 _ => {}
             },
@@ -973,11 +965,9 @@ impl App {
                 }
                 KeyCode::Enter => {
                     self.submit_task_create();
-                    return;
                 }
                 KeyCode::Char('s') if modifiers.contains(KeyModifiers::CONTROL) => {
                     self.submit_task_create();
-                    return;
                 }
                 KeyCode::Esc => {
                     let has_content =
@@ -987,7 +977,6 @@ impl App {
                     } else {
                         self.modal = None;
                     }
-                    return;
                 }
                 _ => {}
             },
@@ -1188,7 +1177,7 @@ impl App {
     ///
     /// Structure: orphan tasks first (no epic), then epics with their tasks.
     pub fn rebuild_dashboard_rows(&mut self) {
-        let _guard = crate::prof_guard!("rebuild_dashboard_rows");
+        crate::prof_guard!("rebuild_dashboard_rows");
 
         // Remember the currently-selected item by ID so we can restore focus
         // after the row list is rebuilt (sort/filter/update can shuffle rows).
@@ -1212,7 +1201,7 @@ impl App {
         let mut top: Vec<TopLevel> = Vec::new();
 
         for task in self.state.tasks.values() {
-            if task.epic_id.is_none() && self.dashboard_filter.map_or(true, |f| task.status == f) {
+            if task.epic_id.is_none() && self.dashboard_filter.is_none_or(|f| task.status == f) {
                 top.push(TopLevel::Task(task.id.clone()));
             }
         }
@@ -1268,7 +1257,7 @@ impl App {
                                     .state
                                     .tasks
                                     .get(&task_id)
-                                    .map_or(false, |t| t.status != *filter)
+                                    .is_some_and(|t| t.status != *filter)
                                 {
                                     continue;
                                 }
@@ -1328,7 +1317,7 @@ impl App {
 
     /// Poll the file watcher channel and apply any new operations.
     pub fn poll_log_changes(&mut self) {
-        let _guard = crate::prof_guard!("poll_log_changes");
+        crate::prof_guard!("poll_log_changes");
         let Some(rx) = &self.watcher_rx else { return };
 
         // Drain all pending events (non-blocking).
@@ -1354,7 +1343,7 @@ impl App {
     /// `app` is still `&mut`. The draw closure then reads the cache as `&App`,
     /// avoiding per-frame re-highlighting.
     pub fn refresh_highlight_cache(&mut self) {
-        let _guard = crate::prof_guard!("refresh_highlight_cache");
+        crate::prof_guard!("refresh_highlight_cache");
 
         // 1. Drain completed highlights from background thread.
         while let Ok(result) = self.highlight_rx.try_recv() {
