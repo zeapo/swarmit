@@ -2,11 +2,11 @@
 /// (avoids spawning the binary in tests, keeping them fast and hermetic).
 use tempfile::TempDir;
 
-use swarmit_core::events::log::append_operation;
-use swarmit_core::events::locking::try_append_with_timeout;
-use swarmit_core::events::operations::{Operation, OperationKind};
-use swarmit_core::models::{AgentId, ItemId, Priority, Status};
-use swarmit_core::state::{write_snapshot, ProjectState, SnapshotV1};
+use swarmit::events::log::append_operation;
+use swarmit::events::locking::try_append_with_timeout;
+use swarmit::events::operations::{Operation, OperationKind};
+use swarmit::models::{AgentId, ItemId, Priority, Status};
+use swarmit::state::{write_snapshot, ProjectState, SnapshotV1};
 
 fn agent() -> AgentId {
     AgentId::new("test-agent").unwrap()
@@ -110,7 +110,7 @@ fn full_task_lifecycle() {
 /// JSON output structure: { ok, data, error }
 #[test]
 fn json_envelope_format() {
-    use swarmit_cli::output::JsonOutput;
+    use swarmit::cli::output::JsonOutput;
 
     let ok = JsonOutput::success(serde_json::json!({ "id": "TASK-001" }));
     let json = serde_json::to_string(&ok).unwrap();
@@ -203,7 +203,7 @@ fn relationship_inverse_created() {
                 OperationKind::AddRelationship {
                     from: t1.clone(),
                     to: t2.clone(),
-                    rel_type: swarmit_core::models::RelationType::Blocks,
+                    rel_type: swarmit::models::RelationType::Blocks,
                 },
             ),
         )?;
@@ -214,7 +214,7 @@ fn relationship_inverse_created() {
                 OperationKind::AddRelationship {
                     from: t2.clone(),
                     to: t1.clone(),
-                    rel_type: swarmit_core::models::RelationType::BlockedBy,
+                    rel_type: swarmit::models::RelationType::BlockedBy,
                 },
             ),
         )
@@ -225,10 +225,10 @@ fn relationship_inverse_created() {
     assert_eq!(state.relationships.len(), 2);
 
     let t1_rels = state.relationships_for(&t1);
-    assert!(t1_rels.iter().any(|r| r.rel_type == swarmit_core::models::RelationType::Blocks));
+    assert!(t1_rels.iter().any(|r| r.rel_type == swarmit::models::RelationType::Blocks));
 
     let t2_rels = state.relationships_for(&t2);
-    assert!(t2_rels.iter().any(|r| r.rel_type == swarmit_core::models::RelationType::BlockedBy));
+    assert!(t2_rels.iter().any(|r| r.rel_type == swarmit::models::RelationType::BlockedBy));
 }
 
 /// Insight round-trip: create task → add insight → verify fields
@@ -294,7 +294,7 @@ fn insight_roundtrip() {
 /// Self-links are rejected.
 #[test]
 fn self_link_rejected() {
-    use swarmit_core::models::SwarmitError;
+    use swarmit::models::SwarmitError;
 
     let id: ItemId = "TASK-001".parse().unwrap();
 
@@ -346,7 +346,7 @@ fn compaction_preserves_state() {
     std::fs::write(&log, b"").unwrap();
 
     // Rewrite snapshot with offset 0 since the log is now empty
-    if let Ok(Some(mut snap)) = swarmit_core::state::read_snapshot(&snapshot_path) {
+    if let Ok(Some(mut snap)) = swarmit::state::read_snapshot(&snapshot_path) {
         snap.log_offset = 0;
         write_snapshot(&snapshot_path, &snap).unwrap();
     }
@@ -359,7 +359,7 @@ fn compaction_preserves_state() {
     assert!(compacted_size < original_log_size);
 
     // State from the snapshot has all 5 tasks preserved
-    let snap = swarmit_core::state::read_snapshot(&snapshot_path)
+    let snap = swarmit::state::read_snapshot(&snapshot_path)
         .unwrap()
         .unwrap();
     assert_eq!(snap.state.tasks.len(), 5);

@@ -2,11 +2,11 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use tempfile::TempDir;
 
-use swarmit_core::events::log::{append_operation, read_operations, read_operations_since};
-use swarmit_core::events::locking::try_append_with_timeout;
-use swarmit_core::events::operations::{Operation, OperationKind};
-use swarmit_core::models::{AgentId, ItemId, Priority};
-use swarmit_core::state::ProjectState;
+use swarmit::events::log::{append_operation, read_operations, read_operations_since};
+use swarmit::events::locking::try_append_with_timeout;
+use swarmit::events::operations::{Operation, OperationKind};
+use swarmit::models::{AgentId, ItemId, Priority};
+use swarmit::state::ProjectState;
 
 fn agent(name: &str) -> AgentId {
     AgentId::new(name).unwrap()
@@ -155,7 +155,7 @@ fn incremental_read_returns_new_ops() {
 /// Test: lock timeout when lock is held by another thread.
 #[test]
 fn lock_timeout_fires() {
-    use swarmit_core::events::locking::with_exclusive_lock;
+    use swarmit::events::locking::with_exclusive_lock;
 
     let dir = TempDir::new().unwrap();
     let lock_path = dir.path().join("operations.lock");
@@ -217,7 +217,7 @@ fn task_lifecycle_round_trip() {
     let state = ProjectState::from_log(&log_path).unwrap();
     let task = &state.tasks[&task_id];
 
-    assert_eq!(task.status, swarmit_core::models::Status::Done);
+    assert_eq!(task.status, swarmit::models::Status::Done);
     assert!(task.claimed_at.is_some());
     assert!(task.completed_at.is_some());
     assert_eq!(task.assignee, Some(agent("alice")));

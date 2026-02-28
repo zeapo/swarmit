@@ -6,7 +6,7 @@ use crate::models::{AgentId, ItemId, Priority};
 use crate::tui::app::App;
 use crate::tui::events::{Focus, Modal, Screen};
 use crate::tui::theme::Theme;
-use crate::{handle_key, render_frame};
+use super::{handle_key, render_frame};
 
 /// Test harness that wraps `App` + `Terminal<TestBackend>`, enabling
 /// integration tests that simulate keystrokes through the full input

@@ -8,6 +8,7 @@ description = "Local-first project management for multi-agent workflows"
 repository = "https://github.com/zeapo/swarmit"
 keywords = ["project-management", "agents", "tui", "cli"]
 categories = ["command-line-utilities", "development-tools"]
+exclude = [".idea/", "docs/", ".swarmit/", ".claude/", "crates/"]
 
 [lib]
 name = "swarmit"
