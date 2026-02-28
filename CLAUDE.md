@@ -3,19 +3,39 @@
 ## Project Structure
 
 ```
-crates/
-  swarmit-core/   # Models, event sourcing, state materializer
-  swarmit-cli/    # CLI commands (clap)
-  swarmit-tui/    # Terminal UI (ratatui + crossterm)
-  swarmit/        # Binary entry point (mode detection)
+src/
+  main.rs          # Binary entry point (mode detection)
+  lib.rs           # Public API, re-exports, load_state(), check_and_write_snapshot()
+  models/          # Domain types: Task, Epic, ItemId, Status, etc.
+  events/          # Event sourcing: Operation, append, locking
+  state/           # Materializer, snapshot, index, markdown sync
+  cli/             # CLI commands (clap)
+    mod.rs         # Cli struct, Commands enum, run()
+    output.rs      # JSON envelope, OutputMode
+    commands/      # One file per command group
+  tui/             # Terminal UI (ratatui + crossterm)
+    mod.rs         # TUI entry point, keyboard dispatch, render loop
+    app.rs         # App struct, event loop state
+    events.rs      # Action, Modal, Screen, Focus enums
+    theme.rs       # Catppuccin theme detection
+    editor.rs      # External editor integration
+    components/    # UI components (tree_list, detail_pane, etc.)
+tests/
+  integration.rs   # Core event sourcing integration tests
+  cli_roundtrip.rs # CLI round-trip tests
+justfile           # Build, test, lint, publish recipes
 ```
+
+Single crate — no workspace. Published to crates.io as `swarmit`.
 
 ## Build & Test
 
 ```bash
-cargo build          # Build all crates
-cargo test           # Run all 42 tests
+cargo build          # Build
+cargo test           # Run all 123 tests
 cargo run -- --help  # CLI help
+just check           # fmt + lint + test
+just publish         # Full publish to crates.io
 ```
 
 Tests use `tempfile` for isolated directories — no global state.
@@ -34,29 +54,35 @@ State is rebuilt by replaying the log. The write path:
 
 **IDs:** `ItemId` in PREFIX-NNN format (e.g., `TASK-001`). Sequence counters tracked in `ProjectState.epic_seq` / `task_seq`.
 
-**CLI dispatch:** `swarmit-cli/src/lib.rs` matches `&cli.command` (by reference to avoid partial moves).
+**CLI dispatch:** `src/cli/mod.rs` matches `&cli.command` (by reference to avoid partial moves).
 All command `run()` functions take `&XxxArgs, &Cli`.
 
-**TUI mode detection:** In `swarmit/src/main.rs`:
+**TUI mode detection:** In `src/main.rs`:
 - No subcommand + TTY → launch TUI
 - No subcommand + pipe → error
 - Subcommand → CLI dispatch
+
+**Module imports:** Since the workspace was merged into a single crate:
+- Core modules live at `crate::models`, `crate::events`, `crate::state`
+- CLI modules live at `crate::cli::*`
+- TUI modules live at `crate::tui::*`
+- The `prof_guard!` macro is defined in `tui/mod.rs` and re-exported at crate root
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `crates/swarmit-core/src/events/operations.rs` | All `OperationKind` variants |
-| `crates/swarmit-core/src/state/materializer.rs` | `ProjectState::apply()` — the state machine |
-| `crates/swarmit-core/src/events/locking.rs` | `fd-lock` write path |
-| `crates/swarmit-cli/src/commands/` | One file per command group |
-| `crates/swarmit-tui/src/app.rs` | TUI `App` struct + event loop state |
-| `crates/swarmit-tui/src/lib.rs` | TUI entry point + keyboard dispatch |
+| `src/events/operations.rs` | All `OperationKind` variants |
+| `src/state/materializer.rs` | `ProjectState::apply()` — the state machine |
+| `src/events/locking.rs` | `fd-lock` write path |
+| `src/cli/commands/` | One file per command group |
+| `src/tui/app.rs` | TUI `App` struct + event loop state |
+| `src/tui/mod.rs` | TUI entry point + keyboard dispatch |
 
 ## Adding a New Operation Kind
 
-1. Add variant to `OperationKind` in `operations.rs`
-2. Handle it in `ProjectState::apply()` in `materializer.rs`
+1. Add variant to `OperationKind` in `src/events/operations.rs`
+2. Handle it in `ProjectState::apply()` in `src/state/materializer.rs`
 3. Add a unit test in the `tests` block of `materializer.rs`
 4. Wire up the CLI command if needed
 
@@ -65,6 +91,17 @@ All command `run()` functions take `&XxxArgs, &Cli`.
 All CLI mutations require `--agent <ID>` or `SWARMIT_AGENT` env var.
 JSON output (`--json`) always uses `{ "ok": bool, "data": ..., "error": ... }`.
 TTY auto-detection: piped stdout → JSON; terminal → pretty text.
+
+## Publishing
+
+```bash
+just check           # Run fmt, lint, test
+just publish-dry-run # Verify packaging
+just publish         # Publish to crates.io
+just bump 1.2.0      # Bump version in Cargo.toml
+```
+
+The `exclude` list in `Cargo.toml` keeps docs, IDE files, and `.swarmit/` out of the package.
 
 ## Task Management (Swarmit)
 
