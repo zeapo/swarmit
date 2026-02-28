@@ -1,7 +1,7 @@
 use std::io::IsTerminal;
 
 use clap::Parser;
-use swarmit::cli::{Cli, run};
+use swarmit::cli::{run, Cli};
 
 fn main() {
     let cli = Cli::parse();

@@ -1,12 +1,12 @@
-use crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::{backend::TestBackend, layout::Position, Terminal};
 use crate::events::operations::{Operation, OperationKind};
 use crate::models::{AgentId, ItemId, Priority};
+use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::{backend::TestBackend, layout::Position, Terminal};
 
+use super::{handle_key, render_frame};
 use crate::tui::app::App;
 use crate::tui::events::{Focus, Modal, Screen};
 use crate::tui::theme::Theme;
-use super::{handle_key, render_frame};
 
 /// Test harness that wraps `App` + `Terminal<TestBackend>`, enabling
 /// integration tests that simulate keystrokes through the full input
@@ -228,10 +228,7 @@ impl TuiTestHarness {
 
     pub fn assert_crab_active(&mut self) -> &mut Self {
         assert!(
-            self.app
-                .crab_animation
-                .as_ref()
-                .map_or(false, |a| a.active),
+            self.app.crab_animation.as_ref().map_or(false, |a| a.active),
             "expected crab animation to be active"
         );
         self
@@ -328,7 +325,9 @@ impl TuiTestHarness {
     /// Render the current app state into the test terminal buffer.
     fn render(&mut self) {
         self.terminal
-            .draw(|f| { render_frame(f, &self.app); })
+            .draw(|f| {
+                render_frame(f, &self.app);
+            })
             .expect("render frame in test harness");
     }
 }

@@ -1,16 +1,16 @@
 use anyhow::{bail, Result};
-use clap::Args;
 use chrono::Utc;
+use clap::Args;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::models::{AgentId, ProjectConfig};
-use crate::events::operations::{Operation, OperationKind};
-use crate::events::log::append_operation;
 use crate::events::locking::try_append_with_timeout;
+use crate::events::log::append_operation;
+use crate::events::operations::{Operation, OperationKind};
+use crate::models::{AgentId, ProjectConfig};
 
+use crate::cli::output::{print_json_ok, OutputMode};
 use crate::cli::Cli;
-use crate::cli::output::{OutputMode, print_json_ok};
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
@@ -37,8 +37,7 @@ pub struct InitArgs {
 
 pub fn run(args: &InitArgs, cli: &Cli) -> Result<()> {
     let agent_str = resolve_agent(cli, &args.agent)?;
-    let agent = AgentId::new(&agent_str)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let agent = AgentId::new(&agent_str).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let project_root = resolve_project_root(cli)?;
 
@@ -66,16 +65,21 @@ pub fn run(args: &InitArgs, cli: &Cli) -> Result<()> {
         },
     );
 
-    try_append_with_timeout(&lock_path, || {
-        append_operation(&log_path, &op)
-    }).map_err(|e| anyhow::anyhow!("{}", e))?;
+    try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Write project.toml
     let config = ProjectConfig {
         name: args.name.clone(),
         description: args.description.clone(),
-        epic_prefix: args.epic_prefix.clone().unwrap_or_else(|| "EPIC".to_string()),
-        task_prefix: args.task_prefix.clone().unwrap_or_else(|| "TASK".to_string()),
+        epic_prefix: args
+            .epic_prefix
+            .clone()
+            .unwrap_or_else(|| "EPIC".to_string()),
+        task_prefix: args
+            .task_prefix
+            .clone()
+            .unwrap_or_else(|| "TASK".to_string()),
         created_at: Utc::now(),
         created_by: agent,
     };
@@ -90,7 +94,11 @@ pub fn run(args: &InitArgs, cli: &Cli) -> Result<()> {
             "dir": swarmit_dir.display().to_string()
         })),
         OutputMode::Pretty => {
-            println!("Initialized swarmit project '{}' at {}", args.name, swarmit_dir.display());
+            println!(
+                "Initialized swarmit project '{}' at {}",
+                args.name,
+                swarmit_dir.display()
+            );
         }
     }
 
@@ -106,8 +114,14 @@ pub fn toml_serialize(config: &ProjectConfig) -> Result<String> {
     }
     s.push_str(&format!("epic_prefix = {:?}\n", config.epic_prefix));
     s.push_str(&format!("task_prefix = {:?}\n", config.task_prefix));
-    s.push_str(&format!("created_at = {:?}\n", config.created_at.to_rfc3339()));
-    s.push_str(&format!("created_by = {:?}\n", config.created_by.to_string()));
+    s.push_str(&format!(
+        "created_at = {:?}\n",
+        config.created_at.to_rfc3339()
+    ));
+    s.push_str(&format!(
+        "created_by = {:?}\n",
+        config.created_by.to_string()
+    ));
     Ok(s)
 }
 
@@ -116,9 +130,9 @@ pub fn resolve_agent(cli: &Cli, cmd_agent: &Option<String>) -> Result<String> {
     cmd_agent
         .clone()
         .or_else(|| cli.agent.clone())
-        .ok_or_else(|| anyhow::anyhow!(
-            "Agent ID required. Use --agent <ID> or set SWARMIT_AGENT env var."
-        ))
+        .ok_or_else(|| {
+            anyhow::anyhow!("Agent ID required. Use --agent <ID> or set SWARMIT_AGENT env var.")
+        })
 }
 
 /// Finds the project root by walking up from cwd to find a .swarmit/ dir.

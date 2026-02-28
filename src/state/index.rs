@@ -38,9 +38,7 @@ impl<'a> StateIndex<'a> {
     }
 
     pub fn by_assignee(&self, agent: &AgentId) -> &[&'a Task] {
-        self.by_assignee
-            .get(agent)
-            .map_or(&[], |v| v.as_slice())
+        self.by_assignee.get(agent).map_or(&[], |v| v.as_slice())
     }
 
     pub fn by_epic(&self, epic_id: &ItemId) -> &[&'a Task] {

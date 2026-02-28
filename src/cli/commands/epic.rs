@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use crate::events::log::append_operation;
 use crate::events::locking::try_append_with_timeout;
+use crate::events::log::append_operation;
 use crate::events::operations::{Operation, OperationKind};
 use crate::models::{AgentId, ItemId, Priority, Status};
 use crate::state::markdown;
@@ -102,7 +102,11 @@ fn create(args: &EpicCreateArgs, cli: &Cli) -> Result<()> {
 
     let (state, log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     let next_id = ItemId::new(
-        &state.config.as_ref().map(|c| c.epic_prefix.clone()).unwrap_or_else(|| "EPIC".to_string()),
+        &state
+            .config
+            .as_ref()
+            .map(|c| c.epic_prefix.clone())
+            .unwrap_or_else(|| "EPIC".to_string()),
         state.epic_seq + 1,
     );
 
@@ -118,10 +122,8 @@ fn create(args: &EpicCreateArgs, cli: &Cli) -> Result<()> {
         },
     );
 
-    try_append_with_timeout(&lock_path, || {
-        append_operation(&log_path, &op)
-    })
-    .map_err(|e| anyhow::anyhow!("{}", e))?;
+    try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let state_dir = swarmit.join("state");
     let (post_state, _) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -132,7 +134,13 @@ fn create(args: &EpicCreateArgs, cli: &Cli) -> Result<()> {
     }
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
-    let _ = crate::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
+    let _ = crate::check_and_write_snapshot(
+        &log_path,
+        &snapshot_path,
+        log_len,
+        log_offset,
+        &post_state,
+    );
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -152,7 +160,11 @@ fn list(args: &EpicListArgs, cli: &Cli) -> Result<()> {
 
     let epics: Vec<_> = if let Some(status_str) = &args.status {
         let status = parse_status(status_str)?;
-        state.epics.values().filter(|e| e.status == status).collect()
+        state
+            .epics
+            .values()
+            .filter(|e| e.status == status)
+            .collect()
     } else {
         state.epics.values().collect()
     };
@@ -200,7 +212,10 @@ fn show(args: &EpicShowArgs, cli: &Cli) -> Result<()> {
     let root = require_project_root(cli)?;
     let (state, _log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let id: ItemId = args.id.parse().map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
+    let id: ItemId = args
+        .id
+        .parse()
+        .map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
     let epic = state
         .epics
         .get(&id)
@@ -213,11 +228,13 @@ fn show(args: &EpicShowArgs, cli: &Cli) -> Result<()> {
         OutputMode::Json => {
             let tasks_data: Vec<_> = tasks
                 .iter()
-                .map(|t| serde_json::json!({
-                    "id": t.id.to_string(),
-                    "title": t.title,
-                    "status": t.status.to_string(),
-                }))
+                .map(|t| {
+                    serde_json::json!({
+                        "id": t.id.to_string(),
+                        "title": t.title,
+                        "status": t.status.to_string(),
+                    })
+                })
                 .collect();
             print_json_ok(serde_json::json!({
                 "id": epic.id.to_string(),
@@ -260,7 +277,10 @@ fn update(args: &EpicUpdateArgs, cli: &Cli) -> Result<()> {
     let lock_path = swarmit.join("operations.lock");
     let snapshot_path = swarmit.join("state.snap");
 
-    let id: ItemId = args.id.parse().map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
+    let id: ItemId = args
+        .id
+        .parse()
+        .map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
 
     // Validate epic exists
     let (state, log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -290,8 +310,12 @@ fn update(args: &EpicUpdateArgs, cli: &Cli) -> Result<()> {
     if let Some(status_str) = &args.status {
         let status = parse_status(status_str)?;
         let status_op = Operation::new(
-            AgentId::new(&resolve_agent(cli, &args.agent)?).map_err(|e| anyhow::anyhow!("{}", e))?,
-            OperationKind::UpdateEpicStatus { id: id.clone(), status },
+            AgentId::new(&resolve_agent(cli, &args.agent)?)
+                .map_err(|e| anyhow::anyhow!("{}", e))?,
+            OperationKind::UpdateEpicStatus {
+                id: id.clone(),
+                status,
+            },
         );
         try_append_with_timeout(&lock_path, || {
             append_operation(&log_path, &op)?;
@@ -299,10 +323,8 @@ fn update(args: &EpicUpdateArgs, cli: &Cli) -> Result<()> {
         })
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     } else {
-        try_append_with_timeout(&lock_path, || {
-            append_operation(&log_path, &op)
-        })
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+        try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
     }
 
     let state_dir = swarmit.join("state");
@@ -314,7 +336,13 @@ fn update(args: &EpicUpdateArgs, cli: &Cli) -> Result<()> {
     }
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
-    let _ = crate::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
+    let _ = crate::check_and_write_snapshot(
+        &log_path,
+        &snapshot_path,
+        log_len,
+        log_offset,
+        &post_state,
+    );
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -334,7 +362,10 @@ fn delete(args: &EpicDeleteArgs, cli: &Cli) -> Result<()> {
     let lock_path = swarmit.join("operations.lock");
     let snapshot_path = swarmit.join("state.snap");
 
-    let id: ItemId = args.id.parse().map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
+    let id: ItemId = args
+        .id
+        .parse()
+        .map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
 
     let (pre_state, log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     let pre_epic = pre_state.epics.get(&id).cloned();
@@ -352,7 +383,13 @@ fn delete(args: &EpicDeleteArgs, cli: &Cli) -> Result<()> {
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
     let (post_state, _) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
-    let _ = crate::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
+    let _ = crate::check_and_write_snapshot(
+        &log_path,
+        &snapshot_path,
+        log_len,
+        log_offset,
+        &post_state,
+    );
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {

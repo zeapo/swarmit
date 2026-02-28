@@ -17,7 +17,9 @@ use crate::models::{AgentId, ItemId, Priority, Status};
 use crate::state::ProjectState;
 
 use crate::tui::components::tree_list::DashboardRow;
-use crate::tui::events::{Action, Focus, KonamiTracker, Modal, Screen, SplitDirection, TaskFormField};
+use crate::tui::events::{
+    Action, Focus, KonamiTracker, Modal, Screen, SplitDirection, TaskFormField,
+};
 use crate::tui::theme::Theme;
 
 /// Which tab is active in the task detail pane.
@@ -474,7 +476,11 @@ impl App {
             }
             Action::ResizePane(delta) => {
                 // + grows the focused pane, - shrinks it
-                let effective = if self.focus == Focus::Detail { delta } else { -delta };
+                let effective = if self.focus == Focus::Detail {
+                    delta
+                } else {
+                    -delta
+                };
                 let new_size = self.detail_size_percent as i16 + effective as i16;
                 self.detail_size_percent = new_size.clamp(20, 80) as u16;
             }
@@ -514,11 +520,10 @@ impl App {
             Action::OpenStatusDialog => {
                 if self.selected_task_id().is_some() {
                     let current = self.selected_task_status().unwrap_or(Status::Todo);
-                    let selected_index =
-                        crate::tui::components::status_select::STATUS_OPTIONS
-                            .iter()
-                            .position(|s| *s == current)
-                            .unwrap_or(0);
+                    let selected_index = crate::tui::components::status_select::STATUS_OPTIONS
+                        .iter()
+                        .position(|s| *s == current)
+                        .unwrap_or(0);
                     self.modal = Some(Modal::StatusSelect { selected_index });
                 }
             }
@@ -534,9 +539,7 @@ impl App {
                 }
             }
             Action::EditDescription => {
-                if self.focus == Focus::Detail
-                    && self.detail_tab == DetailTab::Description
-                {
+                if self.focus == Focus::Detail && self.detail_tab == DetailTab::Description {
                     if let Some(task_id) = self.selected_task_id() {
                         let current_text = self
                             .state
@@ -544,15 +547,15 @@ impl App {
                             .get(&task_id)
                             .and_then(|t| t.description.clone())
                             .unwrap_or_default();
-                        self.pending_editor =
-                            Some(EditorRequest::EditDescription { task_id, current_text });
+                        self.pending_editor = Some(EditorRequest::EditDescription {
+                            task_id,
+                            current_text,
+                        });
                     }
                 }
             }
             Action::AddComment => {
-                if self.focus == Focus::Detail
-                    && self.detail_tab == DetailTab::Comments
-                {
+                if self.focus == Focus::Detail && self.detail_tab == DetailTab::Comments {
                     if let Some(task_id) = self.selected_task_id() {
                         self.pending_editor = Some(EditorRequest::NewComment { task_id });
                     }
@@ -1090,8 +1093,7 @@ impl App {
     ///
     /// Returns `Ok(())` on success, `Err(message)` on failure.
     fn write_operation(&mut self, kind: OperationKind) -> Result<(), String> {
-        let agent_str =
-            std::env::var("SWARMIT_AGENT").unwrap_or_else(|_| "tui-user".to_string());
+        let agent_str = std::env::var("SWARMIT_AGENT").unwrap_or_else(|_| "tui-user".to_string());
         let agent = AgentId::new(&agent_str).map_err(|e| format!("Invalid agent: {}", e))?;
 
         let op = Operation::new(agent, kind);
@@ -1121,11 +1123,7 @@ impl App {
     }
 
     /// Change the status of a task, using the appropriate operation kind.
-    pub fn submit_status_change(
-        &mut self,
-        task_id: ItemId,
-        status: Status,
-    ) -> Result<(), String> {
+    pub fn submit_status_change(&mut self, task_id: ItemId, status: Status) -> Result<(), String> {
         let kind = match status {
             Status::InProgress => OperationKind::ClaimTask { id: task_id },
             Status::Done => OperationKind::CompleteTask { id: task_id },
@@ -1178,11 +1176,7 @@ impl App {
     }
 
     /// Add a comment to a task.
-    pub fn submit_add_comment(
-        &mut self,
-        task_id: ItemId,
-        body: String,
-    ) -> Result<(), String> {
+    pub fn submit_add_comment(&mut self, task_id: ItemId, body: String) -> Result<(), String> {
         self.write_operation(OperationKind::AddComment {
             id: Uuid::now_v7(),
             task_id,
@@ -1199,10 +1193,12 @@ impl App {
         // Remember the currently-selected item by ID so we can restore focus
         // after the row list is rebuilt (sort/filter/update can shuffle rows).
         let prev_id: Option<(bool, ItemId)> =
-            self.dashboard_rows.get(self.selected_index).map(|row| match row {
-                DashboardRow::Epic { id } => (true, id.clone()),
-                DashboardRow::Task { id } => (false, id.clone()),
-            });
+            self.dashboard_rows
+                .get(self.selected_index)
+                .map(|row| match row {
+                    DashboardRow::Epic { id } => (true, id.clone()),
+                    DashboardRow::Task { id } => (false, id.clone()),
+                });
 
         let mut rows = Vec::new();
 
@@ -1427,9 +1423,8 @@ impl App {
     /// Handle a mouse scroll event at terminal cell (`col`, `row`).
     /// `up` is `true` for scroll-up (wheel up / finger swipe down on trackpad).
     pub fn handle_mouse_scroll(&mut self, col: u16, row: u16, up: bool) {
-        let pos_in = |r: Rect| {
-            col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
-        };
+        let pos_in =
+            |r: Rect| col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height;
 
         // Ignore scroll during crab animation or help screen
         if self.crab_animation.is_some() || matches!(self.screen, Screen::Help) {
@@ -1454,7 +1449,11 @@ impl App {
 
         // No modal: hit-test main panels
         if pos_in(self.scroll_regions.list) {
-            if up { self.move_up(); } else { self.move_down(); }
+            if up {
+                self.move_up();
+            } else {
+                self.move_down();
+            }
             if self.detail_open {
                 self.detail_scroll = 0;
                 self.comment_scroll = 0;
@@ -1463,16 +1462,25 @@ impl App {
         } else if self.detail_open && pos_in(self.scroll_regions.detail_content) {
             match self.detail_tab {
                 DetailTab::Description => {
-                    if up { self.detail_scroll = self.detail_scroll.saturating_sub(1); }
-                    else { self.detail_scroll += 1; }
+                    if up {
+                        self.detail_scroll = self.detail_scroll.saturating_sub(1);
+                    } else {
+                        self.detail_scroll += 1;
+                    }
                 }
                 DetailTab::Comments => {
-                    if up { self.comment_scroll = self.comment_scroll.saturating_sub(1); }
-                    else { self.comment_scroll += 1; }
+                    if up {
+                        self.comment_scroll = self.comment_scroll.saturating_sub(1);
+                    } else {
+                        self.comment_scroll += 1;
+                    }
                 }
                 DetailTab::Insights => {
-                    if up { self.insight_scroll = self.insight_scroll.saturating_sub(1); }
-                    else { self.insight_scroll += 1; }
+                    if up {
+                        self.insight_scroll = self.insight_scroll.saturating_sub(1);
+                    } else {
+                        self.insight_scroll += 1;
+                    }
                 }
             }
         }
@@ -1482,10 +1490,10 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::events::Focus;
-    use crate::tui::theme::Theme;
     use crate::events::operations::{Operation, OperationKind};
     use crate::models::{AgentId, Priority, Status};
+    use crate::tui::events::Focus;
+    use crate::tui::theme::Theme;
 
     #[test]
     fn filter_dialog_opens_with_current_filter_preselected() {
@@ -2026,7 +2034,10 @@ mod tests {
         let (mut app, _epic_id, _task_id) = setup_app_with_epic();
         // selected_index = 0 is the epic row
         app.handle_action(Action::OpenStatusDialog);
-        assert!(app.modal.is_none(), "should not open status dialog on epic row");
+        assert!(
+            app.modal.is_none(),
+            "should not open status dialog on epic row"
+        );
     }
 
     #[test]
@@ -2079,7 +2090,10 @@ mod tests {
     fn epic_dialog_noop_on_epic_row() {
         let (mut app, _epic_id, _task_id) = setup_app_with_epic();
         app.handle_action(Action::OpenEpicDialog);
-        assert!(app.modal.is_none(), "should not open epic dialog on epic row");
+        assert!(
+            app.modal.is_none(),
+            "should not open epic dialog on epic row"
+        );
     }
 
     #[test]
@@ -2103,7 +2117,10 @@ mod tests {
 
         assert!(app.pending_editor.is_some());
         match app.pending_editor {
-            Some(EditorRequest::EditDescription { task_id: id, current_text }) => {
+            Some(EditorRequest::EditDescription {
+                task_id: id,
+                current_text,
+            }) => {
                 assert_eq!(id, task_id);
                 assert_eq!(current_text, "Hello world");
             }
@@ -2245,7 +2262,11 @@ mod tests {
         app.detail_tab = DetailTab::Description;
 
         app.handle_action(Action::TabForward);
-        assert_eq!(app.detail_tab, DetailTab::Description, "tab should not change");
+        assert_eq!(
+            app.detail_tab,
+            DetailTab::Description,
+            "tab should not change"
+        );
         assert!(!app.detail_open);
     }
 }

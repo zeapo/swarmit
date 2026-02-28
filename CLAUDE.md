@@ -40,6 +40,10 @@ just publish         # Full publish to crates.io
 
 Tests use `tempfile` for isolated directories — no global state.
 
+**Always run `just fmt` after writing code.** The project uses standard `rustfmt`
+formatting. Before committing, run `just fmt-check` to verify — CI will reject
+unformatted code. The `just check` recipe includes this automatically.
+
 ## Architecture
 
 **Event sourcing:** All mutations write an `Operation` (JSONL line) to `.swarmit/operations.log`.

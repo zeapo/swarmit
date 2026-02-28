@@ -73,14 +73,8 @@ fn format_epic_markdown(epic: &Epic) -> String {
     buf.push_str(&format!("status: {}\n", epic.status));
     buf.push_str(&format!("priority: {}\n", epic.priority));
     buf.push_str(&format!("created_by: {}\n", epic.created_by));
-    buf.push_str(&format!(
-        "created_at: {}\n",
-        epic.created_at.to_rfc3339()
-    ));
-    buf.push_str(&format!(
-        "updated_at: {}\n",
-        epic.updated_at.to_rfc3339()
-    ));
+    buf.push_str(&format!("created_at: {}\n", epic.created_at.to_rfc3339()));
+    buf.push_str(&format!("updated_at: {}\n", epic.updated_at.to_rfc3339()));
     if let Some(a) = &epic.assignee {
         buf.push_str(&format!("assignee: {}\n", a));
     }
@@ -101,14 +95,8 @@ fn format_task_markdown(task: &Task) -> String {
     buf.push_str(&format!("status: {}\n", task.status));
     buf.push_str(&format!("priority: {}\n", task.priority));
     buf.push_str(&format!("created_by: {}\n", task.created_by));
-    buf.push_str(&format!(
-        "created_at: {}\n",
-        task.created_at.to_rfc3339()
-    ));
-    buf.push_str(&format!(
-        "updated_at: {}\n",
-        task.updated_at.to_rfc3339()
-    ));
+    buf.push_str(&format!("created_at: {}\n", task.created_at.to_rfc3339()));
+    buf.push_str(&format!("updated_at: {}\n", task.updated_at.to_rfc3339()));
     if let Some(eid) = &task.epic_id {
         buf.push_str(&format!("epic_id: {}\n", eid));
     }

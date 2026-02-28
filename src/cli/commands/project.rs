@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use crate::events::log::append_operation;
 use crate::events::locking::try_append_with_timeout;
+use crate::events::log::append_operation;
 use crate::events::operations::{Operation, OperationKind};
 use crate::models::AgentId;
 
@@ -81,7 +81,10 @@ fn show(_args: &ProjectShowArgs, cli: &Cli) -> Result<()> {
             }
             println!("  Epic prefix:  {}", config.epic_prefix);
             println!("  Task prefix:  {}", config.task_prefix);
-            println!("  Created at:   {}", config.created_at.format("%Y-%m-%d %H:%M:%S UTC"));
+            println!(
+                "  Created at:   {}",
+                config.created_at.format("%Y-%m-%d %H:%M:%S UTC")
+            );
             println!("  Created by:   {}", config.created_by);
         }
     }
@@ -113,7 +116,11 @@ fn update(args: &ProjectUpdateArgs, cli: &Cli) -> Result<()> {
         agent,
         OperationKind::UpdateProject {
             name: args.name.clone(),
-            description: if args.clear_description { None } else { args.description.clone() },
+            description: if args.clear_description {
+                None
+            } else {
+                args.description.clone()
+            },
             clear_description: args.clear_description,
         },
     );
@@ -129,7 +136,13 @@ fn update(args: &ProjectUpdateArgs, cli: &Cli) -> Result<()> {
     }
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
-    let _ = crate::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
+    let _ = crate::check_and_write_snapshot(
+        &log_path,
+        &snapshot_path,
+        log_len,
+        log_offset,
+        &post_state,
+    );
 
     let new_name = args.name.as_deref().unwrap_or(&config.name);
     let mode = OutputMode::detect(cli.json, cli.plain);

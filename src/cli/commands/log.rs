@@ -32,7 +32,9 @@ pub fn run(args: &LogArgs, cli: &Cli) -> Result<()> {
     let ops: Vec<_> = all_ops
         .iter()
         .filter(|op| {
-            args.agent.as_deref().map_or(true, |a| op.agent.as_str() == a)
+            args.agent
+                .as_deref()
+                .map_or(true, |a| op.agent.as_str() == a)
         })
         .rev()
         .take(args.tail)

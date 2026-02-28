@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use crate::events::log::append_operation;
 use crate::events::locking::try_append_with_timeout;
+use crate::events::log::append_operation;
 use crate::events::operations::{Operation, OperationKind};
 use crate::models::{AgentId, ItemId, RelationType, SwarmitError};
 use crate::state::ProjectState;
@@ -76,8 +76,14 @@ fn add(args: &LinkAddArgs, cli: &Cli) -> Result<()> {
     let lock_path = swarmit.join("operations.lock");
     let snapshot_path = swarmit.join("state.snap");
 
-    let from: ItemId = args.from.parse().map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
-    let to: ItemId = args.to.parse().map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
+    let from: ItemId = args
+        .from
+        .parse()
+        .map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
+    let to: ItemId = args
+        .to
+        .parse()
+        .map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
 
     // Validate no self-link
     if from == to {
@@ -92,9 +98,10 @@ fn add(args: &LinkAddArgs, cli: &Cli) -> Result<()> {
     validate_item_exists(&state, &to)?;
 
     // Check for duplicate
-    let existing = state.relationships.iter().any(|r| {
-        r.from == from && r.to == to && r.rel_type == rel_type
-    });
+    let existing = state
+        .relationships
+        .iter()
+        .any(|r| r.from == from && r.to == to && r.rel_type == rel_type);
     if existing {
         anyhow::bail!("Relationship already exists: {} {} {}", from, rel_type, to);
     }
@@ -133,7 +140,13 @@ fn add(args: &LinkAddArgs, cli: &Cli) -> Result<()> {
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
     let (post_state, _) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
-    let _ = crate::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
+    let _ = crate::check_and_write_snapshot(
+        &log_path,
+        &snapshot_path,
+        log_len,
+        log_offset,
+        &post_state,
+    );
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -157,8 +170,14 @@ fn remove(args: &LinkRemoveArgs, cli: &Cli) -> Result<()> {
     let lock_path = swarmit.join("operations.lock");
     let snapshot_path = swarmit.join("state.snap");
 
-    let from: ItemId = args.from.parse().map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
-    let to: ItemId = args.to.parse().map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
+    let from: ItemId = args
+        .from
+        .parse()
+        .map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
+    let to: ItemId = args
+        .to
+        .parse()
+        .map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
     let rel_type = parse_rel_type(&args.r#type)?;
 
     let op = Operation::new(
@@ -207,7 +226,10 @@ fn list(args: &LinkListArgs, cli: &Cli) -> Result<()> {
     let root = require_project_root(cli)?;
     let (state, _log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let id: ItemId = args.id.parse().map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
+    let id: ItemId = args
+        .id
+        .parse()
+        .map_err(|e: SwarmitError| anyhow::anyhow!("{}", e))?;
     let rels = state.relationships_for(&id);
 
     let mode = OutputMode::detect(cli.json, cli.plain);
@@ -215,11 +237,13 @@ fn list(args: &LinkListArgs, cli: &Cli) -> Result<()> {
         OutputMode::Json => {
             let data: Vec<_> = rels
                 .iter()
-                .map(|r| serde_json::json!({
-                    "from": r.from.to_string(),
-                    "to": r.to.to_string(),
-                    "type": r.rel_type.to_string(),
-                }))
+                .map(|r| {
+                    serde_json::json!({
+                        "from": r.from.to_string(),
+                        "to": r.to.to_string(),
+                        "type": r.rel_type.to_string(),
+                    })
+                })
                 .collect();
             print_json_ok(data);
         }

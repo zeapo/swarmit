@@ -7,8 +7,8 @@ use ratatui::{
 };
 
 use super::help::centered_rect;
-use crate::tui::app::App;
 use crate::models::ItemId;
+use crate::tui::app::App;
 
 /// Builds the list of epic options: "None" at index 0, then all epics sorted by ID.
 pub fn epic_options(app: &App) -> Vec<Option<ItemId>> {

@@ -219,8 +219,8 @@ pub(super) fn render_frame(f: &mut Frame, app: &App) -> ScrollRegions {
                 regions.list = split[0];
                 components::tree_list::render(f, app, split[0]);
                 // Detail side: 1-row breadcrumb + detail pane content
-                let detail = Layout::vertical([Constraint::Length(1), Constraint::Min(0)])
-                    .split(split[1]);
+                let detail =
+                    Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(split[1]);
                 components::detail_pane::render_breadcrumb(f, app, detail[0]);
                 components::detail_pane::render(f, app, detail[1]);
                 regions.detail_content = detail[1];

@@ -2,8 +2,8 @@
 /// (avoids spawning the binary in tests, keeping them fast and hermetic).
 use tempfile::TempDir;
 
-use swarmit::events::log::append_operation;
 use swarmit::events::locking::try_append_with_timeout;
+use swarmit::events::log::append_operation;
 use swarmit::events::operations::{Operation, OperationKind};
 use swarmit::models::{AgentId, ItemId, Priority, Status};
 use swarmit::state::{write_snapshot, ProjectState, SnapshotV1};
@@ -84,7 +84,12 @@ fn full_task_lifecycle() {
     try_append_with_timeout(&lock, || {
         append_operation(
             &log,
-            &Operation::new(agent(), OperationKind::ClaimTask { id: task_id.clone() }),
+            &Operation::new(
+                agent(),
+                OperationKind::ClaimTask {
+                    id: task_id.clone(),
+                },
+            ),
         )
     })
     .unwrap();
@@ -97,7 +102,12 @@ fn full_task_lifecycle() {
     try_append_with_timeout(&lock, || {
         append_operation(
             &log,
-            &Operation::new(agent(), OperationKind::CompleteTask { id: task_id.clone() }),
+            &Operation::new(
+                agent(),
+                OperationKind::CompleteTask {
+                    id: task_id.clone(),
+                },
+            ),
         )
     })
     .unwrap();
@@ -153,17 +163,17 @@ fn corrupted_log_recovery() {
     .unwrap();
 
     // Corrupt the log by appending a partial line
-    let mut file = std::fs::OpenOptions::new()
-        .append(true)
-        .open(&log)
+    let mut file = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
+    file.write_all(b"{\"corrupted\": true, \"incomplete\":")
         .unwrap();
-    file.write_all(b"{\"corrupted\": true, \"incomplete\":").unwrap();
     drop(file);
 
     // Should still read the valid operations successfully
     let state = ProjectState::from_log(&log).unwrap();
     assert_eq!(state.tasks.len(), 1);
-    assert!(state.tasks.contains_key(&"TASK-001".parse::<ItemId>().unwrap()));
+    assert!(state
+        .tasks
+        .contains_key(&"TASK-001".parse::<ItemId>().unwrap()));
 }
 
 /// Relationship inverse is automatically created.
@@ -225,10 +235,14 @@ fn relationship_inverse_created() {
     assert_eq!(state.relationships.len(), 2);
 
     let t1_rels = state.relationships_for(&t1);
-    assert!(t1_rels.iter().any(|r| r.rel_type == swarmit::models::RelationType::Blocks));
+    assert!(t1_rels
+        .iter()
+        .any(|r| r.rel_type == swarmit::models::RelationType::Blocks));
 
     let t2_rels = state.relationships_for(&t2);
-    assert!(t2_rels.iter().any(|r| r.rel_type == swarmit::models::RelationType::BlockedBy));
+    assert!(t2_rels
+        .iter()
+        .any(|r| r.rel_type == swarmit::models::RelationType::BlockedBy));
 }
 
 /// Insight round-trip: create task → add insight → verify fields
@@ -282,7 +296,10 @@ fn insight_roundtrip() {
     assert_eq!(insights.len(), 1);
     assert_eq!(insights[0].id, insight_id);
     assert_eq!(insights[0].file_path, "src/auth.rs");
-    assert_eq!(insights[0].before_snippet.as_deref(), Some("fn old_login()"));
+    assert_eq!(
+        insights[0].before_snippet.as_deref(),
+        Some("fn old_login()")
+    );
     assert_eq!(
         insights[0].after_snippet.as_deref(),
         Some("fn login() -> Result<()>")
@@ -339,7 +356,14 @@ fn compaction_preserves_state() {
     // Simulate compaction (same logic as compact.rs --truncate)
     let log_len = std::fs::metadata(&log).unwrap().len();
     let state = ProjectState::from_log(&log).unwrap();
-    write_snapshot(&snapshot_path, &SnapshotV1 { log_offset: log_len, state }).unwrap();
+    write_snapshot(
+        &snapshot_path,
+        &SnapshotV1 {
+            log_offset: log_len,
+            state,
+        },
+    )
+    .unwrap();
 
     // Backup and truncate the log
     std::fs::copy(&log, &bak).unwrap();

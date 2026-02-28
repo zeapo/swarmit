@@ -23,19 +23,19 @@ pub fn run(args: &CompactArgs, cli: &Cli) -> Result<()> {
     let snapshot_path = swarmit.join("state.snap");
 
     // Get current log size before replaying
-    let log_len = std::fs::metadata(&log_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
 
     // Load current state (uses snapshot + oplog tail for efficiency)
-    let (state, _log_offset) = crate::load_state(&root)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let (state, _log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     // Write snapshot at current log end offset
-    write_snapshot(&snapshot_path, &SnapshotV1 {
-        log_offset: log_len,
-        state,
-    })
+    write_snapshot(
+        &snapshot_path,
+        &SnapshotV1 {
+            log_offset: log_len,
+            state,
+        },
+    )
     .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     if args.truncate {
@@ -47,12 +47,11 @@ pub fn run(args: &CompactArgs, cli: &Cli) -> Result<()> {
         std::fs::write(&log_path, b"")?;
 
         // Rewrite snapshot with offset 0, since the log is now empty
-        if let Ok(Some(mut snap)) = read_snapshot(&snapshot_path)
-            .map_err(|e| anyhow::anyhow!("{}", e))
+        if let Ok(Some(mut snap)) =
+            read_snapshot(&snapshot_path).map_err(|e| anyhow::anyhow!("{}", e))
         {
             snap.log_offset = 0;
-            write_snapshot(&snapshot_path, &snap)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            write_snapshot(&snapshot_path, &snap).map_err(|e| anyhow::anyhow!("{}", e))?;
         }
 
         let mode = OutputMode::detect(cli.json, cli.plain);
@@ -63,7 +62,10 @@ pub fn run(args: &CompactArgs, cli: &Cli) -> Result<()> {
                 "backup": bak_path.display().to_string(),
             })),
             OutputMode::Pretty => {
-                println!("Snapshot written. Log truncated (backup at {}).", bak_path.display());
+                println!(
+                    "Snapshot written. Log truncated (backup at {}).",
+                    bak_path.display()
+                );
             }
         }
     } else {

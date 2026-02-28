@@ -1,11 +1,11 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use uuid::Uuid;
-use crate::events::log::append_operation;
 use crate::events::locking::try_append_with_timeout;
+use crate::events::log::append_operation;
 use crate::events::operations::{Operation, OperationKind};
 use crate::models::{AgentId, ItemId, SwarmitError};
+use uuid::Uuid;
 
 use crate::cli::output::{print_json_ok, OutputMode};
 use crate::cli::Cli;
@@ -83,7 +83,13 @@ fn add(args: &CommentAddArgs, cli: &Cli) -> Result<()> {
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
     let (post_state, _) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
-    let _ = crate::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
+    let _ = crate::check_and_write_snapshot(
+        &log_path,
+        &snapshot_path,
+        log_len,
+        log_offset,
+        &post_state,
+    );
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {

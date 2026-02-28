@@ -30,9 +30,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
             Modal::StatusSelect { .. } => {
                 ("Status".to_string(), "j/k:move  Enter:select  Esc:cancel")
             }
-            Modal::EpicSelect { .. } => {
-                ("Epic".to_string(), "j/k:move  Enter:select  Esc:cancel")
-            }
+            Modal::EpicSelect { .. } => ("Epic".to_string(), "j/k:move  Enter:select  Esc:cancel"),
         }
     } else {
         match &app.screen {

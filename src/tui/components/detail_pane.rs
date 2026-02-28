@@ -153,7 +153,11 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(6), Constraint::Length(1), Constraint::Min(3)])
+        .constraints([
+            Constraint::Length(6),
+            Constraint::Length(1),
+            Constraint::Min(3),
+        ])
         .split(area);
 
     // ── Metadata ─────────────────────────────────────────────────────────
@@ -207,11 +211,7 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
     }
 
     let meta = Paragraph::new(meta_lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(border),
-        )
+        .block(Block::default().borders(Borders::ALL).border_style(border))
         .wrap(Wrap { trim: true });
     f.render_widget(meta, chunks[0]);
 
@@ -265,11 +265,7 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
                     )))
                 };
             let desc = Paragraph::new(desc_content)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(border),
-                )
+                .block(Block::default().borders(Borders::ALL).border_style(border))
                 .wrap(Wrap { trim: false })
                 .scroll((app.detail_scroll as u16, 0));
             f.render_widget(desc, chunks[2]);
@@ -312,11 +308,7 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
                 Text::from(lines)
             };
             let comments_widget = Paragraph::new(content)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(border),
-                )
+                .block(Block::default().borders(Borders::ALL).border_style(border))
                 .wrap(Wrap { trim: false })
                 .scroll((app.comment_scroll as u16, 0));
             f.render_widget(comments_widget, chunks[2]);
@@ -354,10 +346,7 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
                     ]));
                     // Before snippet
                     if let Some(before) = &insight.before_snippet {
-                        lines.push(Line::from(Span::styled(
-                            " Before:",
-                            theme.muted_style(),
-                        )));
+                        lines.push(Line::from(Span::styled(" Before:", theme.muted_style())));
                         for snippet_line in before.lines() {
                             lines.push(Line::from(Span::styled(
                                 format!("   {}", snippet_line),
@@ -367,10 +356,7 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
                     }
                     // After snippet
                     if let Some(after) = &insight.after_snippet {
-                        lines.push(Line::from(Span::styled(
-                            " After:",
-                            theme.muted_style(),
-                        )));
+                        lines.push(Line::from(Span::styled(" After:", theme.muted_style())));
                         for snippet_line in after.lines() {
                             lines.push(Line::from(Span::styled(
                                 format!("   {}", snippet_line),
@@ -389,11 +375,7 @@ fn render_task(f: &mut Frame, app: &App, area: Rect, task_id: &ItemId) {
                 Text::from(lines)
             };
             let insights_widget = Paragraph::new(content)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(border),
-                )
+                .block(Block::default().borders(Borders::ALL).border_style(border))
                 .wrap(Wrap { trim: false })
                 .scroll((app.insight_scroll as u16, 0));
             f.render_widget(insights_widget, chunks[2]);
@@ -453,11 +435,7 @@ fn render_epic(f: &mut Frame, app: &App, area: Rect, epic_id: &ItemId) {
     }
 
     let meta = Paragraph::new(meta_lines)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(border),
-        )
+        .block(Block::default().borders(Borders::ALL).border_style(border))
         .wrap(Wrap { trim: true });
     f.render_widget(meta, chunks[0]);
 

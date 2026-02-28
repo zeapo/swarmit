@@ -31,11 +31,7 @@ pub fn open_editor_with(
 ) -> Result<Option<String>> {
     // Write content to a temp file.
     let tmp_dir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
-    let filename = format!(
-        "swarmit-edit-{}.{}",
-        uuid::Uuid::now_v7(),
-        extension
-    );
+    let filename = format!("swarmit-edit-{}.{}", uuid::Uuid::now_v7(), extension);
     let tmp_path = std::path::PathBuf::from(&tmp_dir).join(&filename);
     std::fs::write(&tmp_path, content)?;
 

@@ -64,7 +64,11 @@ impl ProjectState {
                 self.config = Some(config);
             }
 
-            OperationKind::UpdateProject { name, description, clear_description } => {
+            OperationKind::UpdateProject {
+                name,
+                description,
+                clear_description,
+            } => {
                 let config = self.config.as_mut().ok_or_else(|| {
                     SwarmitError::NotInitialized("Cannot update project before init".into())
                 })?;
@@ -282,29 +286,20 @@ impl ProjectState {
                     None
                 };
                 // Remove all relationships involving this task
-                self.relationships
-                    .retain(|r| r.from != id && r.to != id);
+                self.relationships.retain(|r| r.from != id && r.to != id);
                 if let Some(eid) = epic_id {
                     self.check_epic_completion(&eid, op.timestamp);
                 }
             }
 
-            OperationKind::AddRelationship {
-                from,
-                to,
-                rel_type,
-            } => {
+            OperationKind::AddRelationship { from, to, rel_type } => {
                 let rel = Relationship::new(from, to, rel_type);
                 if !self.relationships.contains(&rel) {
                     self.relationships.push(rel);
                 }
             }
 
-            OperationKind::RemoveRelationship {
-                from,
-                to,
-                rel_type,
-            } => {
+            OperationKind::RemoveRelationship { from, to, rel_type } => {
                 self.relationships
                     .retain(|r| !(r.from == from && r.to == to && r.rel_type == rel_type));
             }
@@ -317,10 +312,7 @@ impl ProjectState {
                     body,
                     created_at: op.timestamp,
                 };
-                self.comments
-                    .entry(task_id)
-                    .or_default()
-                    .push(comment);
+                self.comments.entry(task_id).or_default().push(comment);
             }
 
             OperationKind::AddInsight {
@@ -341,10 +333,7 @@ impl ProjectState {
                     body,
                     created_at: op.timestamp,
                 };
-                self.insights
-                    .entry(task_id)
-                    .or_default()
-                    .push(insight);
+                self.insights.entry(task_id).or_default().push(insight);
             }
         }
 
@@ -352,17 +341,22 @@ impl ProjectState {
     }
 
     /// Auto-transitions an epic to Done if it has tasks and all of them are Done.
-    fn check_epic_completion(&mut self, epic_id: &ItemId, timestamp: chrono::DateTime<chrono::Utc>) {
+    fn check_epic_completion(
+        &mut self,
+        epic_id: &ItemId,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    ) {
         let Some(epic) = self.epics.get(epic_id) else {
             return;
         };
         if epic.task_ids.is_empty() {
             return;
         }
-        let all_done = epic
-            .task_ids
-            .iter()
-            .all(|tid| self.tasks.get(tid).map_or(false, |t| t.status == Status::Done));
+        let all_done = epic.task_ids.iter().all(|tid| {
+            self.tasks
+                .get(tid)
+                .map_or(false, |t| t.status == Status::Done)
+        });
         if all_done {
             if let Some(epic) = self.epics.get_mut(epic_id) {
                 epic.status = Status::Done;
@@ -415,7 +409,6 @@ impl ProjectState {
             .filter(|t| t.epic_id.as_ref() == Some(epic_id))
             .collect()
     }
-
 }
 
 #[cfg(test)]
@@ -647,8 +640,7 @@ mod tests {
     #[test]
     fn complete_all_tasks_auto_closes_epic() {
         let mut state = ProjectState::new();
-        let (epic_id, task_ids) =
-            make_epic_with_tasks(&mut state, &["TASK-001", "TASK-002"]);
+        let (epic_id, task_ids) = make_epic_with_tasks(&mut state, &["TASK-001", "TASK-002"]);
 
         for tid in &task_ids {
             state
@@ -662,8 +654,7 @@ mod tests {
     #[test]
     fn partial_completion_does_not_close_epic() {
         let mut state = ProjectState::new();
-        let (epic_id, task_ids) =
-            make_epic_with_tasks(&mut state, &["TASK-001", "TASK-002"]);
+        let (epic_id, task_ids) = make_epic_with_tasks(&mut state, &["TASK-001", "TASK-002"]);
 
         // Complete only the first task
         state
@@ -678,8 +669,7 @@ mod tests {
     #[test]
     fn delete_last_non_done_task_closes_epic() {
         let mut state = ProjectState::new();
-        let (epic_id, task_ids) =
-            make_epic_with_tasks(&mut state, &["TASK-001", "TASK-002"]);
+        let (epic_id, task_ids) = make_epic_with_tasks(&mut state, &["TASK-001", "TASK-002"]);
 
         // Complete the first task, then delete the second
         state
@@ -699,8 +689,7 @@ mod tests {
     #[test]
     fn add_task_to_done_epic_reopens_it() {
         let mut state = ProjectState::new();
-        let (epic_id, task_ids) =
-            make_epic_with_tasks(&mut state, &["TASK-001"]);
+        let (epic_id, task_ids) = make_epic_with_tasks(&mut state, &["TASK-001"]);
 
         state
             .apply(op(OperationKind::CompleteTask {
@@ -768,7 +757,9 @@ mod tests {
             }))
             .unwrap();
         state
-            .apply(op(OperationKind::CompleteTask { id: task_id.clone() }))
+            .apply(op(OperationKind::CompleteTask {
+                id: task_id.clone(),
+            }))
             .unwrap();
 
         // Assign the already-Done task to the epic via UpdateTask.
@@ -812,9 +803,7 @@ mod tests {
             }))
             .unwrap();
         state
-            .apply(op(OperationKind::CompleteTask {
-                id: task_id,
-            }))
+            .apply(op(OperationKind::CompleteTask { id: task_id }))
             .unwrap();
 
         assert_eq!(state.epics[&epic_id].status, Status::Todo);
@@ -920,7 +909,10 @@ mod tests {
             clear_description: false,
         }));
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), SwarmitError::NotInitialized(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            SwarmitError::NotInitialized(_)
+        ));
     }
 
     #[test]

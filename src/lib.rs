@@ -1,7 +1,7 @@
-pub mod models;
-pub mod events;
-pub mod state;
 pub mod cli;
+pub mod events;
+pub mod models;
+pub mod state;
 pub mod tui;
 
 // Re-export the profiling macro so `crate::prof_guard!` works everywhere.
@@ -166,7 +166,10 @@ mod tests {
         check_and_write_snapshot(&log_path, &snapshot_path, 200_000, 0, &state)
             .expect("check_and_write_snapshot should succeed");
 
-        assert!(snapshot_path.exists(), "snapshot file should have been written");
+        assert!(
+            snapshot_path.exists(),
+            "snapshot file should have been written"
+        );
 
         let loaded = read_snapshot(&snapshot_path)
             .expect("read_snapshot should succeed")

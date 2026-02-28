@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use crate::events::log::append_operation;
 use crate::events::locking::try_append_with_timeout;
+use crate::events::log::append_operation;
 use crate::events::operations::{Operation, OperationKind};
 use crate::models::{AgentId, ItemId};
 use crate::state::markdown;
@@ -103,7 +103,11 @@ pub struct TaskDoneArgs {
 }
 
 /// Materializes the task's markdown file from the given state.
-fn materialize_task_from_state(state_dir: &std::path::Path, state: &ProjectState, task_id: &ItemId) -> Result<()> {
+fn materialize_task_from_state(
+    state_dir: &std::path::Path,
+    state: &ProjectState,
+    task_id: &ItemId,
+) -> Result<()> {
     if let Some(task) = state.tasks.get(task_id) {
         match &task.epic_id {
             Some(eid) => {
@@ -145,7 +149,11 @@ fn create(args: &TaskCreateArgs, cli: &Cli) -> Result<()> {
 
     let (state, log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     let next_id = ItemId::new(
-        &state.config.as_ref().map(|c| c.task_prefix.clone()).unwrap_or_else(|| "TASK".to_string()),
+        &state
+            .config
+            .as_ref()
+            .map(|c| c.task_prefix.clone())
+            .unwrap_or_else(|| "TASK".to_string()),
         state.task_seq + 1,
     );
 
@@ -153,7 +161,10 @@ fn create(args: &TaskCreateArgs, cli: &Cli) -> Result<()> {
     let epic_id = args
         .epic
         .as_deref()
-        .map(|s| s.parse::<ItemId>().map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e)))
+        .map(|s| {
+            s.parse::<ItemId>()
+                .map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))
+        })
         .transpose()?;
 
     // Validate epic exists if provided
@@ -182,7 +193,13 @@ fn create(args: &TaskCreateArgs, cli: &Cli) -> Result<()> {
     materialize_task_from_state(&state_dir, &post_state, &next_id)?;
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
-    let _ = crate::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
+    let _ = crate::check_and_write_snapshot(
+        &log_path,
+        &snapshot_path,
+        log_len,
+        log_offset,
+        &post_state,
+    );
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -204,7 +221,10 @@ fn list(args: &TaskListArgs, cli: &Cli) -> Result<()> {
     let epic_filter = args
         .epic
         .as_deref()
-        .map(|s| s.parse::<ItemId>().map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e)))
+        .map(|s| {
+            s.parse::<ItemId>()
+                .map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))
+        })
         .transpose()?;
     let assignee_filter = args
         .assignee
@@ -217,7 +237,9 @@ fn list(args: &TaskListArgs, cli: &Cli) -> Result<()> {
         .values()
         .filter(|t| {
             status_filter.map_or(true, |s| t.status == s)
-                && epic_filter.as_ref().map_or(true, |eid| t.epic_id.as_ref() == Some(eid))
+                && epic_filter
+                    .as_ref()
+                    .map_or(true, |eid| t.epic_id.as_ref() == Some(eid))
                 && assignee_filter
                     .as_ref()
                     .map_or(true, |a| t.assignee.as_ref() == Some(a))
@@ -256,7 +278,10 @@ fn list(args: &TaskListArgs, cli: &Cli) -> Result<()> {
                 println!(
                     "{:<12} {:<12} {:<8} {:<8} {}",
                     t.id,
-                    t.assignee.as_ref().map(|a| a.to_string()).unwrap_or_else(|| "-".to_string()),
+                    t.assignee
+                        .as_ref()
+                        .map(|a| a.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
                     format!("{}", t.status),
                     format!("{}", t.priority),
                     t.title,
@@ -272,7 +297,10 @@ fn show(args: &TaskShowArgs, cli: &Cli) -> Result<()> {
     let root = require_project_root(cli)?;
     let (state, _log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let id: ItemId = args.id.parse().map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
+    let id: ItemId = args
+        .id
+        .parse()
+        .map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
     let task = state
         .tasks
         .get(&id)
@@ -356,7 +384,12 @@ fn show(args: &TaskShowArgs, cli: &Cli) -> Result<()> {
             if !comments.is_empty() {
                 println!("\nComments ({}):", comments.len());
                 for c in &comments {
-                    println!("  [{}] {}: {}", c.created_at.format("%Y-%m-%d %H:%M"), c.author, c.body);
+                    println!(
+                        "  [{}] {}: {}",
+                        c.created_at.format("%Y-%m-%d %H:%M"),
+                        c.author,
+                        c.body
+                    );
                 }
             }
             if !insights.is_empty() {
@@ -392,7 +425,10 @@ fn update(args: &TaskUpdateArgs, cli: &Cli) -> Result<()> {
     let lock_path = swarmit.join("operations.lock");
     let snapshot_path = swarmit.join("state.snap");
 
-    let id: ItemId = args.id.parse().map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
+    let id: ItemId = args
+        .id
+        .parse()
+        .map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
 
     let (state, log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     if !state.tasks.contains_key(&id) {
@@ -404,7 +440,10 @@ fn update(args: &TaskUpdateArgs, cli: &Cli) -> Result<()> {
     let epic_id = args
         .epic
         .as_deref()
-        .map(|s| s.parse::<ItemId>().map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e)))
+        .map(|s| {
+            s.parse::<ItemId>()
+                .map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))
+        })
         .transpose()?;
     let assignee = args
         .assignee
@@ -429,7 +468,10 @@ fn update(args: &TaskUpdateArgs, cli: &Cli) -> Result<()> {
             let status = parse_status(status_str)?;
             ops.push(Operation::new(
                 agent,
-                OperationKind::UpdateTaskStatus { id: id.clone(), status },
+                OperationKind::UpdateTaskStatus {
+                    id: id.clone(),
+                    status,
+                },
             ));
         }
         ops
@@ -462,7 +504,13 @@ fn update(args: &TaskUpdateArgs, cli: &Cli) -> Result<()> {
     materialize_task_from_state(&state_dir, &post_state, &id)?;
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
-    let _ = crate::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
+    let _ = crate::check_and_write_snapshot(
+        &log_path,
+        &snapshot_path,
+        log_len,
+        log_offset,
+        &post_state,
+    );
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -482,7 +530,10 @@ fn delete(args: &TaskDeleteArgs, cli: &Cli) -> Result<()> {
     let lock_path = swarmit.join("operations.lock");
     let snapshot_path = swarmit.join("state.snap");
 
-    let id: ItemId = args.id.parse().map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
+    let id: ItemId = args
+        .id
+        .parse()
+        .map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
 
     let (pre_state, log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     let pre_epic = pre_state
@@ -503,7 +554,13 @@ fn delete(args: &TaskDeleteArgs, cli: &Cli) -> Result<()> {
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
     let (post_state, _) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
-    let _ = crate::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
+    let _ = crate::check_and_write_snapshot(
+        &log_path,
+        &snapshot_path,
+        log_len,
+        log_offset,
+        &post_state,
+    );
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -525,7 +582,10 @@ fn claim(args: &TaskClaimArgs, cli: &Cli) -> Result<()> {
 
     let (_, log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let id: ItemId = args.id.parse().map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
+    let id: ItemId = args
+        .id
+        .parse()
+        .map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
     let op = Operation::new(agent, OperationKind::ClaimTask { id: id.clone() });
 
     try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
@@ -536,11 +596,19 @@ fn claim(args: &TaskClaimArgs, cli: &Cli) -> Result<()> {
     materialize_task_from_state(&state_dir, &post_state, &id)?;
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
-    let _ = crate::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
+    let _ = crate::check_and_write_snapshot(
+        &log_path,
+        &snapshot_path,
+        log_len,
+        log_offset,
+        &post_state,
+    );
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
-        OutputMode::Json => print_json_ok(serde_json::json!({ "id": id.to_string(), "claimed": true })),
+        OutputMode::Json => {
+            print_json_ok(serde_json::json!({ "id": id.to_string(), "claimed": true }))
+        }
         OutputMode::Pretty => println!("Claimed task {}", id),
     }
 
@@ -558,7 +626,10 @@ fn done(args: &TaskDoneArgs, cli: &Cli) -> Result<()> {
 
     let (_, log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let id: ItemId = args.id.parse().map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
+    let id: ItemId = args
+        .id
+        .parse()
+        .map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
     let op = Operation::new(agent, OperationKind::CompleteTask { id: id.clone() });
 
     try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
@@ -569,11 +640,19 @@ fn done(args: &TaskDoneArgs, cli: &Cli) -> Result<()> {
     materialize_task_from_state(&state_dir, &post_state, &id)?;
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
-    let _ = crate::check_and_write_snapshot(&log_path, &snapshot_path, log_len, log_offset, &post_state);
+    let _ = crate::check_and_write_snapshot(
+        &log_path,
+        &snapshot_path,
+        log_len,
+        log_offset,
+        &post_state,
+    );
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
-        OutputMode::Json => print_json_ok(serde_json::json!({ "id": id.to_string(), "done": true })),
+        OutputMode::Json => {
+            print_json_ok(serde_json::json!({ "id": id.to_string(), "done": true }))
+        }
         OutputMode::Pretty => println!("Completed task {}", id),
     }
 

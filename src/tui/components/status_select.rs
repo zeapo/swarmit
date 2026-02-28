@@ -7,8 +7,8 @@ use ratatui::{
 };
 
 use super::help::centered_rect;
-use crate::tui::app::App;
 use crate::models::Status;
+use crate::tui::app::App;
 
 /// The ordered list of statuses shown in the StatusSelect dialog.
 pub const STATUS_OPTIONS: &[Status] = &[

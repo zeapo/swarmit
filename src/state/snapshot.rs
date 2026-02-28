@@ -19,10 +19,7 @@ pub struct SnapshotV1 {
 
 /// Writes a snapshot atomically to `snapshot_path` via a temp file + rename.
 pub fn write_snapshot(snapshot_path: &Path, payload: &SnapshotV1) -> crate::models::Result<()> {
-    let tmp_path = snapshot_path
-        .parent()
-        .unwrap()
-        .join("state.snap.tmp");
+    let tmp_path = snapshot_path.parent().unwrap().join("state.snap.tmp");
 
     let serialized = rmp_serde::to_vec(payload).map_err(|e| {
         SwarmitError::Io(std::io::Error::new(

@@ -2,8 +2,8 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use tempfile::TempDir;
 
-use swarmit::events::log::{append_operation, read_operations, read_operations_since};
 use swarmit::events::locking::try_append_with_timeout;
+use swarmit::events::log::{append_operation, read_operations, read_operations_since};
 use swarmit::events::operations::{Operation, OperationKind};
 use swarmit::models::{AgentId, ItemId, Priority};
 use swarmit::state::ProjectState;
@@ -170,7 +170,7 @@ fn lock_timeout_fires() {
     let h = thread::spawn(move || {
         with_exclusive_lock(&lock_path2, 5_000, || {
             barrier2.wait(); // Signal: lock acquired
-            // Hold for 200ms
+                             // Hold for 200ms
             thread::sleep(std::time::Duration::from_millis(200));
             release2.store(true, std::sync::atomic::Ordering::Relaxed);
             Ok(())
@@ -206,8 +206,18 @@ fn task_lifecycle_round_trip() {
                 epic_id: None,
             },
         ),
-        Operation::new(agent("alice"), OperationKind::ClaimTask { id: task_id.clone() }),
-        Operation::new(agent("alice"), OperationKind::CompleteTask { id: task_id.clone() }),
+        Operation::new(
+            agent("alice"),
+            OperationKind::ClaimTask {
+                id: task_id.clone(),
+            },
+        ),
+        Operation::new(
+            agent("alice"),
+            OperationKind::CompleteTask {
+                id: task_id.clone(),
+            },
+        ),
     ];
 
     for op in &ops {
