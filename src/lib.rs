@@ -4,6 +4,9 @@ pub mod state;
 pub mod cli;
 pub mod tui;
 
+// Re-export the profiling macro so `crate::prof_guard!` works everywhere.
+pub(crate) use tui::prof_guard;
+
 pub use models::{
     AgentId, Comment, Epic, Insight, ItemId, Priority, Project, ProjectConfig, RelationType,
     Relationship, Result, Status, SwarmitError, Task,
