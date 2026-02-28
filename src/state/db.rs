@@ -3115,4 +3115,1215 @@ mod tests {
         assert_eq!(db.epic_seq, mem.epic_seq);
         assert_eq!(db.task_seq, mem.task_seq);
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  Adversarial Stress Tests
+    //  Intentionally try to break the state: ghost ops, orphan refs,
+    //  concurrency races, sequence counter attacks, double-option edge
+    //  cases, and replay safety.
+    // ══════════════════════════════════════════════════════════════════
+
+    /// Raw SQL count helper for stress tests.
+    fn query_count(conn: &Connection, sql: &str) -> i64 {
+        conn.query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
+    // ── Category 1: Ghost Operations ──────────────────────────────────
+    // Operations on non-existent entities. apply_to_db silently does
+    // UPDATE ... WHERE id=? (0 rows affected), while the materializer
+    // would return Err(NotFound).
+
+    #[test]
+    fn test_ghost_update_task_silently_noop() {
+        let (_dir, conn) = setup_db();
+
+        let ghost_op = make_op(OperationKind::UpdateTask {
+            id: "TASK-999".parse().unwrap(),
+            title: Some("Ghost".to_string()),
+            description: None,
+            priority: None,
+            epic_id: None,
+            assignee: None,
+        });
+
+        // DB accepts the ghost op (UPDATE matches 0 rows — silent success)
+        write_operation(&conn, &ghost_op).unwrap();
+
+        let state = load_state(&conn).unwrap();
+        assert!(
+            state.tasks.is_empty(),
+            "ghost update should not create a task"
+        );
+
+        // Op IS in the log
+        assert_eq!(
+            query_count(&conn, "SELECT COUNT(*) FROM operations"),
+            1,
+            "ghost op should be recorded in operations log"
+        );
+
+        // Materializer rejects on replay
+        let mut mem = ProjectState::default();
+        assert!(
+            mem.apply(ghost_op).is_err(),
+            "materializer should return NotFound for ghost update"
+        );
+    }
+
+    #[test]
+    fn test_ghost_claim_and_complete_silently_noop() {
+        let (_dir, conn) = setup_db();
+
+        let claim_op = make_op(OperationKind::ClaimTask {
+            id: "TASK-999".parse().unwrap(),
+        });
+        let complete_op = make_op(OperationKind::CompleteTask {
+            id: "TASK-888".parse().unwrap(),
+        });
+
+        // Both succeed at DB level
+        write_operation(&conn, &claim_op).unwrap();
+        write_operation(&conn, &complete_op).unwrap();
+
+        let state = load_state(&conn).unwrap();
+        assert!(state.tasks.is_empty());
+        assert_eq!(query_count(&conn, "SELECT COUNT(*) FROM operations"), 2);
+
+        // Both fail on materializer replay
+        let mut mem = ProjectState::default();
+        assert!(mem.apply(claim_op).is_err());
+        assert!(mem.apply(complete_op).is_err());
+    }
+
+    #[test]
+    fn test_ghost_epic_ops_silently_noop() {
+        let (_dir, conn) = setup_db();
+
+        let update_op = make_op(OperationKind::UpdateEpic {
+            id: "EPIC-999".parse().unwrap(),
+            title: Some("Ghost Epic".to_string()),
+            description: None,
+            priority: None,
+            assignee: None,
+        });
+        let status_op = make_op(OperationKind::UpdateEpicStatus {
+            id: "EPIC-999".parse().unwrap(),
+            status: Status::Done,
+        });
+
+        write_operation(&conn, &update_op).unwrap();
+        write_operation(&conn, &status_op).unwrap();
+
+        let state = load_state(&conn).unwrap();
+        assert!(
+            state.epics.is_empty(),
+            "ghost epic ops should not create an epic"
+        );
+        assert_eq!(query_count(&conn, "SELECT COUNT(*) FROM operations"), 2);
+
+        let mut mem = ProjectState::default();
+        assert!(mem.apply(update_op).is_err());
+        assert!(mem.apply(status_op).is_err());
+    }
+
+    #[test]
+    fn test_ghost_ops_survive_compact_cleanly() {
+        let (_dir, conn) = setup_db();
+
+        // Seed sequences
+        write_operation(
+            &conn,
+            &make_op(OperationKind::InitProject {
+                name: "Test".to_string(),
+                description: None,
+                epic_prefix: None,
+                task_prefix: None,
+                auto_materialize: None,
+                materialize_path: None,
+            }),
+        )
+        .unwrap();
+
+        // Valid op
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CreateTask {
+                id: "TASK-001".parse().unwrap(),
+                title: "Real Task".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            }),
+        )
+        .unwrap();
+
+        // Ghost op (claim non-existent task)
+        write_operation(
+            &conn,
+            &make_op(OperationKind::ClaimTask {
+                id: "TASK-999".parse().unwrap(),
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(query_count(&conn, "SELECT COUNT(*) FROM operations"), 3);
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.tasks.len(), 1);
+        assert_eq!(state.task_seq, 1);
+
+        // Compact erases all ops (including ghost)
+        compact_db(&conn).unwrap();
+        assert_eq!(query_count(&conn, "SELECT COUNT(*) FROM operations"), 0);
+
+        // State is preserved — real task survives, ghost is gone from log
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.tasks.len(), 1, "real task should survive compact");
+        assert!(state
+            .tasks
+            .contains_key(&"TASK-001".parse::<ItemId>().unwrap()));
+    }
+
+    // ── Category 2: Orphan References ─────────────────────────────────
+    // No FK constraints in schema. Deletes leave dangling references.
+
+    #[test]
+    fn test_delete_epic_orphans_task_epic_id() {
+        // DeleteEpic removes from `epics` and `epic_task_ids` but does NOT
+        // null out `tasks.epic_id`. The task retains a dangling reference.
+        let (_dir, conn) = setup_db();
+
+        let epic_id: ItemId = "EPIC-001".parse().unwrap();
+        let task_id: ItemId = "TASK-001".parse().unwrap();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CreateEpic {
+                id: epic_id.clone(),
+                title: "Doomed Epic".to_string(),
+                description: None,
+                priority: Priority::Medium,
+            }),
+        )
+        .unwrap();
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CreateTask {
+                id: task_id.clone(),
+                title: "Orphan Task".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: Some(epic_id.clone()),
+            }),
+        )
+        .unwrap();
+        write_operation(
+            &conn,
+            &make_op(OperationKind::DeleteEpic {
+                id: epic_id.clone(),
+            }),
+        )
+        .unwrap();
+
+        let state = load_state(&conn).unwrap();
+
+        // Epic is gone
+        assert!(!state.epics.contains_key(&epic_id));
+
+        // epic_task_ids cleaned by DeleteEpic
+        assert_eq!(
+            query_count(&conn, "SELECT COUNT(*) FROM epic_task_ids"),
+            0,
+            "epic_task_ids should be cleaned by DeleteEpic"
+        );
+
+        // ORPHAN: task still has dangling epic_id
+        assert_eq!(
+            state.tasks[&task_id].epic_id,
+            Some(epic_id.clone()),
+            "task retains dangling epic_id after epic deletion"
+        );
+
+        // Materializer agrees on the orphan
+        let mut mem = ProjectState::default();
+        for op in read_all_operations(&conn).unwrap() {
+            let _ = mem.apply(op);
+        }
+        assert_eq!(
+            mem.tasks[&task_id].epic_id,
+            Some(epic_id),
+            "materializer also leaves the dangling epic_id"
+        );
+    }
+
+    #[test]
+    fn test_delete_task_leaves_orphan_comments_and_insights() {
+        // DeleteTask removes the task, relationships, and epic_task_ids entries
+        // but does NOT remove comments or insights.
+        let (_dir, conn) = setup_db();
+
+        let task_id: ItemId = "TASK-001".parse().unwrap();
+        let comment_id = uuid::Uuid::now_v7();
+        let insight_id = uuid::Uuid::now_v7();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CreateTask {
+                id: task_id.clone(),
+                title: "Task with artifacts".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            }),
+        )
+        .unwrap();
+        write_operation(
+            &conn,
+            &make_op(OperationKind::AddComment {
+                id: comment_id,
+                task_id: task_id.clone(),
+                body: "Important note".to_string(),
+            }),
+        )
+        .unwrap();
+        write_operation(
+            &conn,
+            &make_op(OperationKind::AddInsight {
+                id: insight_id,
+                task_id: task_id.clone(),
+                file_path: "src/main.rs".to_string(),
+                before_snippet: Some("old".to_string()),
+                after_snippet: Some("new".to_string()),
+                body: "Code change".to_string(),
+            }),
+        )
+        .unwrap();
+
+        // Delete the task
+        write_operation(
+            &conn,
+            &make_op(OperationKind::DeleteTask {
+                id: task_id.clone(),
+            }),
+        )
+        .unwrap();
+
+        let state = load_state(&conn).unwrap();
+
+        // Task is gone
+        assert!(!state.tasks.contains_key(&task_id));
+
+        // ORPHANS: comments and insights survive deletion
+        assert_eq!(
+            state.comments_for(&task_id).len(),
+            1,
+            "orphan comment should survive task deletion"
+        );
+        assert_eq!(
+            state.insights_for(&task_id).len(),
+            1,
+            "orphan insight should survive task deletion"
+        );
+
+        // Raw DB agrees
+        assert_eq!(query_count(&conn, "SELECT COUNT(*) FROM comments"), 1);
+        assert_eq!(query_count(&conn, "SELECT COUNT(*) FROM insights"), 1);
+    }
+
+    #[test]
+    fn test_relationship_for_nonexistent_tasks() {
+        // AddRelationship does not validate entity existence.
+        let (_dir, conn) = setup_db();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::AddRelationship {
+                from: "TASK-100".parse().unwrap(),
+                to: "TASK-200".parse().unwrap(),
+                rel_type: RelationType::Blocks,
+            }),
+        )
+        .unwrap();
+
+        let state = load_state(&conn).unwrap();
+        assert_eq!(
+            state.relationships.len(),
+            1,
+            "relationship should exist for non-existent tasks"
+        );
+        assert!(state.tasks.is_empty());
+    }
+
+    #[test]
+    fn test_create_task_pointing_to_deleted_epic() {
+        // Creating a task with epic_id pointing to a deleted epic:
+        // - task.epic_id is set (dangling)
+        // - DB inserts orphan row into epic_task_ids (no FK constraint)
+        // - load_state ignores orphan epic_task_ids (epic not in map)
+        // - Materializer skips adding to epic.task_ids (epic not in BTreeMap)
+        let (_dir, conn) = setup_db();
+
+        let epic_id: ItemId = "EPIC-001".parse().unwrap();
+        let task_id: ItemId = "TASK-001".parse().unwrap();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CreateEpic {
+                id: epic_id.clone(),
+                title: "Ephemeral Epic".to_string(),
+                description: None,
+                priority: Priority::Medium,
+            }),
+        )
+        .unwrap();
+        write_operation(
+            &conn,
+            &make_op(OperationKind::DeleteEpic {
+                id: epic_id.clone(),
+            }),
+        )
+        .unwrap();
+
+        // Create task pointing to the deleted epic
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CreateTask {
+                id: task_id.clone(),
+                title: "Orphan at birth".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: Some(epic_id.clone()),
+            }),
+        )
+        .unwrap();
+
+        let state = load_state(&conn).unwrap();
+
+        // Task has dangling epic_id
+        assert_eq!(state.tasks[&task_id].epic_id, Some(epic_id.clone()));
+
+        // Epic doesn't exist
+        assert!(!state.epics.contains_key(&epic_id));
+
+        // Raw DB has orphan epic_task_ids row (no FK validation)
+        assert_eq!(
+            query_count(&conn, "SELECT COUNT(*) FROM epic_task_ids"),
+            1,
+            "orphan epic_task_ids row exists in raw DB"
+        );
+
+        // Materializer agrees: task has epic_id but epic doesn't exist
+        let mut mem = ProjectState::default();
+        for op in read_all_operations(&conn).unwrap() {
+            let _ = mem.apply(op);
+        }
+        assert_eq!(mem.tasks[&task_id].epic_id, Some(epic_id));
+    }
+
+    // ── Category 3: Concurrency Attacks ───────────────────────────────
+
+    #[test]
+    fn test_compact_during_concurrent_writes() {
+        // 4 writer threads (each creates 5 tasks) + 1 compact thread, all behind
+        // a barrier. After join: load_state succeeds and all 20 tasks are present,
+        // because compact only clears the operations log, not materialized tables.
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".swarmit")).unwrap();
+        let conn = open_db(dir.path()).unwrap();
+        drop(conn);
+
+        let root = Arc::new(dir.path().to_path_buf());
+        let barrier = Arc::new(Barrier::new(5)); // 4 writers + 1 compactor
+
+        let writers: Vec<_> = (0..4)
+            .map(|i| {
+                let root = Arc::clone(&root);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    let conn = open_db(&root).unwrap();
+                    barrier.wait();
+                    for j in 0..5 {
+                        let idx = (i * 5 + j + 1) as u32;
+                        let agent = AgentId::new(&format!("writer-{i}")).unwrap();
+                        let op = Operation::new(
+                            agent,
+                            OperationKind::CreateTask {
+                                id: ItemId::new("TASK", idx),
+                                title: format!("Task {idx}"),
+                                description: None,
+                                priority: Priority::Medium,
+                                epic_id: None,
+                            },
+                        );
+                        write_operation(&conn, &op).unwrap();
+                    }
+                })
+            })
+            .collect();
+
+        let compactor = {
+            let root = Arc::clone(&root);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                let conn = open_db(&root).unwrap();
+                barrier.wait();
+                // Compact may or may not interleave with writes
+                let _ = compact_db(&conn);
+            })
+        };
+
+        for w in writers {
+            w.join().unwrap();
+        }
+        compactor.join().unwrap();
+
+        let conn = open_db(dir.path()).unwrap();
+        let state = load_state(&conn).unwrap();
+
+        // All 20 tasks must be present: write_operation atomically inserts into
+        // BOTH operations AND tasks. Compact only deletes operations.
+        assert_eq!(
+            state.tasks.len(),
+            20,
+            "all 20 tasks must survive concurrent compact"
+        );
+    }
+
+    #[test]
+    fn test_rapid_open_write_close_cycle() {
+        // Stress: open/write/close 50 times. No corruption from connection churn.
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".swarmit")).unwrap();
+
+        // Seed sequences
+        {
+            let conn = open_db(dir.path()).unwrap();
+            write_operation(
+                &conn,
+                &make_op(OperationKind::InitProject {
+                    name: "Churn Test".to_string(),
+                    description: None,
+                    epic_prefix: None,
+                    task_prefix: None,
+                    auto_materialize: None,
+                    materialize_path: None,
+                }),
+            )
+            .unwrap();
+        }
+
+        for i in 1..=50u32 {
+            let conn = open_db(dir.path()).unwrap();
+            write_operation(
+                &conn,
+                &make_op(OperationKind::CreateTask {
+                    id: ItemId::new("TASK", i),
+                    title: format!("Task {i}"),
+                    description: None,
+                    priority: Priority::Medium,
+                    epic_id: None,
+                }),
+            )
+            .unwrap();
+            // Connection dropped here
+        }
+
+        let conn = open_db(dir.path()).unwrap();
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.tasks.len(), 50, "all 50 tasks should survive churn");
+        assert_eq!(state.task_seq, 50);
+    }
+
+    #[test]
+    fn test_concurrent_duplicate_create_task() {
+        // 4 threads all create TASK-001 concurrently.
+        // INSERT OR IGNORE: first write wins, others are no-ops.
+        // All 4 ops land in the log, but only 1 task exists.
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".swarmit")).unwrap();
+        let conn = open_db(dir.path()).unwrap();
+        drop(conn);
+
+        let root = Arc::new(dir.path().to_path_buf());
+        let barrier = Arc::new(Barrier::new(4));
+
+        let handles: Vec<_> = (0..4)
+            .map(|i| {
+                let root = Arc::clone(&root);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    let conn = open_db(&root).unwrap();
+                    barrier.wait();
+                    let agent = AgentId::new(&format!("racer-{i}")).unwrap();
+                    let op = Operation::new(
+                        agent,
+                        OperationKind::CreateTask {
+                            id: "TASK-001".parse().unwrap(),
+                            title: format!("Title from thread {i}"),
+                            description: None,
+                            priority: Priority::Medium,
+                            epic_id: None,
+                        },
+                    );
+                    // All threads succeed (INSERT OR IGNORE)
+                    write_operation(&conn, &op).unwrap();
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let conn = open_db(dir.path()).unwrap();
+
+        // All 4 ops in the log
+        assert_eq!(
+            query_count(&conn, "SELECT COUNT(*) FROM operations"),
+            4,
+            "all 4 duplicate create ops should be in the log"
+        );
+
+        // But only 1 task (INSERT OR IGNORE)
+        let state = load_state(&conn).unwrap();
+        assert_eq!(
+            state.tasks.len(),
+            1,
+            "INSERT OR IGNORE should produce exactly 1 task"
+        );
+    }
+
+    // ── Category 4: Sequence Counter Attacks ──────────────────────────
+
+    #[test]
+    fn test_seq_gap_jump_and_fill() {
+        // Sequence counters use MAX semantics. Creating TASK-050 sets task_seq=50.
+        // Creating TASK-005 afterwards keeps it at 50. TASK-051 advances to 51.
+        let (_dir, conn) = setup_db();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::InitProject {
+                name: "Seq Test".to_string(),
+                description: None,
+                epic_prefix: None,
+                task_prefix: None,
+                auto_materialize: None,
+                materialize_path: None,
+            }),
+        )
+        .unwrap();
+
+        // Jump to 50
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CreateTask {
+                id: ItemId::new("TASK", 50),
+                title: "Task 50".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            }),
+        )
+        .unwrap();
+        assert_eq!(load_state(&conn).unwrap().task_seq, 50);
+
+        // Fill lower — seq stays at 50
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CreateTask {
+                id: ItemId::new("TASK", 5),
+                title: "Task 5".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            }),
+        )
+        .unwrap();
+        let state = load_state(&conn).unwrap();
+        assert_eq!(
+            state.task_seq, 50,
+            "task_seq should stay at 50 (MAX semantics)"
+        );
+        assert_eq!(state.tasks.len(), 2);
+
+        // Advance to 51
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CreateTask {
+                id: ItemId::new("TASK", 51),
+                title: "Task 51".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            }),
+        )
+        .unwrap();
+        assert_eq!(load_state(&conn).unwrap().task_seq, 51);
+    }
+
+    #[test]
+    fn test_duplicate_create_diverges_db_vs_materializer() {
+        // DIVERGENCE: DB uses INSERT OR IGNORE (first-writer-wins) while
+        // materializer uses BTreeMap::insert (last-writer-wins).
+        let (_dir, conn) = setup_db();
+
+        let task_id: ItemId = "TASK-001".parse().unwrap();
+
+        let op1 = make_op(OperationKind::CreateTask {
+            id: task_id.clone(),
+            title: "First".to_string(),
+            description: None,
+            priority: Priority::High,
+            epic_id: None,
+        });
+        let op2 = make_op(OperationKind::CreateTask {
+            id: task_id.clone(),
+            title: "Second".to_string(),
+            description: None,
+            priority: Priority::Low,
+            epic_id: None,
+        });
+
+        write_operation(&conn, &op1).unwrap();
+        write_operation(&conn, &op2).unwrap();
+
+        // DB: INSERT OR IGNORE preserves the first row
+        let db_state = load_state(&conn).unwrap();
+        assert_eq!(
+            db_state.tasks[&task_id].title, "First",
+            "DB should have 'First' (INSERT OR IGNORE preserves original)"
+        );
+        assert_eq!(db_state.tasks[&task_id].priority, Priority::High);
+
+        // Materializer: BTreeMap::insert overwrites
+        let mut mem = ProjectState::default();
+        mem.apply(op1).unwrap();
+        mem.apply(op2).unwrap();
+        assert_eq!(
+            mem.tasks[&task_id].title, "Second",
+            "materializer should have 'Second' (BTreeMap overwrites)"
+        );
+        assert_eq!(mem.tasks[&task_id].priority, Priority::Low);
+
+        // DIVERGENCE: DB and materializer disagree
+        assert_ne!(
+            db_state.tasks[&task_id].title, mem.tasks[&task_id].title,
+            "DIVERGENCE: DB (first-writer-wins) vs materializer (last-writer-wins)"
+        );
+    }
+
+    #[test]
+    fn test_seq_independence_epic_vs_task() {
+        // Epic and task sequence counters are independent.
+        let (_dir, conn) = setup_db();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::InitProject {
+                name: "Seq Independence".to_string(),
+                description: None,
+                epic_prefix: None,
+                task_prefix: None,
+                auto_materialize: None,
+                materialize_path: None,
+            }),
+        )
+        .unwrap();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CreateEpic {
+                id: ItemId::new("EPIC", 100),
+                title: "Epic 100".to_string(),
+                description: None,
+                priority: Priority::Medium,
+            }),
+        )
+        .unwrap();
+
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.epic_seq, 100);
+        assert_eq!(state.task_seq, 0, "task_seq unaffected by epic creation");
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CreateTask {
+                id: ItemId::new("TASK", 5),
+                title: "Task 5".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            }),
+        )
+        .unwrap();
+
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.epic_seq, 100, "epic_seq unaffected by task creation");
+        assert_eq!(state.task_seq, 5);
+
+        // Lower epic number doesn't decrease seq
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CreateEpic {
+                id: ItemId::new("EPIC", 3),
+                title: "Epic 3".to_string(),
+                description: None,
+                priority: Priority::Medium,
+            }),
+        )
+        .unwrap();
+
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.epic_seq, 100, "epic_seq stays at 100 (MAX semantics)");
+        assert_eq!(state.task_seq, 5, "task_seq stays at 5");
+    }
+
+    // ── Category 5: Double-Option Edge Cases ──────────────────────────
+    // UpdateTask.epic_id: Option<Option<ItemId>>
+    //   None            → don't touch this field
+    //   Some(Some(eid)) → set epic to eid
+    //   Some(None)      → clear epic (detach)
+
+    #[test]
+    fn test_update_task_epic_id_all_variants() {
+        let (_dir, conn) = setup_db();
+
+        let epic1: ItemId = "EPIC-001".parse().unwrap();
+        let epic2: ItemId = "EPIC-002".parse().unwrap();
+        let task_id: ItemId = "TASK-001".parse().unwrap();
+
+        let setup_ops = vec![
+            make_op(OperationKind::CreateEpic {
+                id: epic1.clone(),
+                title: "Epic 1".to_string(),
+                description: None,
+                priority: Priority::Medium,
+            }),
+            make_op(OperationKind::CreateEpic {
+                id: epic2.clone(),
+                title: "Epic 2".to_string(),
+                description: None,
+                priority: Priority::Medium,
+            }),
+            make_op(OperationKind::CreateTask {
+                id: task_id.clone(),
+                title: "Moving Task".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: Some(epic1.clone()),
+            }),
+        ];
+        let mut mem = ProjectState::default();
+        for op in &setup_ops {
+            write_operation(&conn, op).unwrap();
+            mem.apply(op.clone()).unwrap();
+        }
+
+        // Step 1: epic_id: None → no change
+        let noop_op = make_op(OperationKind::UpdateTask {
+            id: task_id.clone(),
+            title: None,
+            description: None,
+            priority: None,
+            epic_id: None,
+            assignee: None,
+        });
+        write_operation(&conn, &noop_op).unwrap();
+        mem.apply(noop_op).unwrap();
+
+        let db = load_state(&conn).unwrap();
+        assert_eq!(
+            db.tasks[&task_id].epic_id,
+            Some(epic1.clone()),
+            "epic_id: None should not change the epic"
+        );
+        assert_eq!(db.tasks[&task_id].epic_id, mem.tasks[&task_id].epic_id);
+
+        // Step 2: Some(Some(EPIC-002)) → move to epic2
+        let move_op = make_op(OperationKind::UpdateTask {
+            id: task_id.clone(),
+            title: None,
+            description: None,
+            priority: None,
+            epic_id: Some(Some(epic2.clone())),
+            assignee: None,
+        });
+        write_operation(&conn, &move_op).unwrap();
+        mem.apply(move_op).unwrap();
+
+        let db = load_state(&conn).unwrap();
+        assert_eq!(db.tasks[&task_id].epic_id, Some(epic2.clone()));
+        assert_eq!(db.tasks[&task_id].epic_id, mem.tasks[&task_id].epic_id);
+        assert!(db.epics[&epic2].task_ids.contains(&task_id));
+        assert!(!db.epics[&epic1].task_ids.contains(&task_id));
+
+        // Step 3: Some(None) → clear epic
+        let clear_op = make_op(OperationKind::UpdateTask {
+            id: task_id.clone(),
+            title: None,
+            description: None,
+            priority: None,
+            epic_id: Some(None),
+            assignee: None,
+        });
+        write_operation(&conn, &clear_op).unwrap();
+        mem.apply(clear_op).unwrap();
+
+        let db = load_state(&conn).unwrap();
+        assert_eq!(
+            db.tasks[&task_id].epic_id, None,
+            "Some(None) should clear epic"
+        );
+        assert_eq!(db.tasks[&task_id].epic_id, mem.tasks[&task_id].epic_id);
+        assert!(!db.epics[&epic2].task_ids.contains(&task_id));
+    }
+
+    #[test]
+    fn test_update_task_assignee_all_variants() {
+        // UpdateTask.assignee: Option<Option<AgentId>>
+        //   None               → don't touch
+        //   Some(Some(agent))  → set
+        //   Some(None)         → clear to NULL
+        let (_dir, conn) = setup_db();
+
+        let task_id: ItemId = "TASK-001".parse().unwrap();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CreateTask {
+                id: task_id.clone(),
+                title: "Assignee Test".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            }),
+        )
+        .unwrap();
+
+        // Claim sets assignee to "test-agent"
+        write_operation(
+            &conn,
+            &make_op(OperationKind::ClaimTask {
+                id: task_id.clone(),
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            load_state(&conn).unwrap().tasks[&task_id].assignee,
+            Some(agent())
+        );
+
+        // assignee: None → no change
+        write_operation(
+            &conn,
+            &make_op(OperationKind::UpdateTask {
+                id: task_id.clone(),
+                title: None,
+                description: None,
+                priority: None,
+                epic_id: None,
+                assignee: None,
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            load_state(&conn).unwrap().tasks[&task_id].assignee,
+            Some(agent()),
+            "assignee: None should not change"
+        );
+
+        // assignee: Some(Some("bob")) → change
+        let bob = AgentId::new("bob").unwrap();
+        write_operation(
+            &conn,
+            &make_op(OperationKind::UpdateTask {
+                id: task_id.clone(),
+                title: None,
+                description: None,
+                priority: None,
+                epic_id: None,
+                assignee: Some(Some(bob.clone())),
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            load_state(&conn).unwrap().tasks[&task_id].assignee,
+            Some(bob)
+        );
+
+        // assignee: Some(None) → clear
+        write_operation(
+            &conn,
+            &make_op(OperationKind::UpdateTask {
+                id: task_id.clone(),
+                title: None,
+                description: None,
+                priority: None,
+                epic_id: None,
+                assignee: Some(None),
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            load_state(&conn).unwrap().tasks[&task_id].assignee,
+            None,
+            "Some(None) should clear assignee to NULL"
+        );
+    }
+
+    #[test]
+    fn test_detach_last_task_from_done_epic() {
+        // When all tasks in an epic are Done, the epic auto-closes. If we then
+        // detach the last task via UpdateTask { epic_id: Some(None) },
+        // check_epic_completion returns early (empty task list → no status change).
+        // The epic stays Done.
+        let (_dir, conn) = setup_db();
+
+        let epic_id: ItemId = "EPIC-001".parse().unwrap();
+        let task_id: ItemId = "TASK-001".parse().unwrap();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CreateEpic {
+                id: epic_id.clone(),
+                title: "Auto-close Epic".to_string(),
+                description: None,
+                priority: Priority::Medium,
+            }),
+        )
+        .unwrap();
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CreateTask {
+                id: task_id.clone(),
+                title: "Only Task".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: Some(epic_id.clone()),
+            }),
+        )
+        .unwrap();
+
+        // Complete task → epic auto-closes
+        write_operation(
+            &conn,
+            &make_op(OperationKind::CompleteTask {
+                id: task_id.clone(),
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            load_state(&conn).unwrap().epics[&epic_id].status,
+            Status::Done
+        );
+
+        // Detach task from epic
+        write_operation(
+            &conn,
+            &make_op(OperationKind::UpdateTask {
+                id: task_id.clone(),
+                title: None,
+                description: None,
+                priority: None,
+                epic_id: Some(None),
+                assignee: None,
+            }),
+        )
+        .unwrap();
+
+        let state = load_state(&conn).unwrap();
+
+        // Task list is empty
+        assert!(state.epics[&epic_id].task_ids.is_empty());
+
+        // Epic stays Done (check_epic_completion returns early for empty task list)
+        assert_eq!(
+            state.epics[&epic_id].status,
+            Status::Done,
+            "epic stays Done after detaching last task (empty list → early return)"
+        );
+
+        // DIVERGENCE: materializer replay from log does NOT agree.
+        // Option<Option<ItemId>> with value Some(None) serializes to JSON `null`,
+        // which deserializes back as None ("don't touch") instead of Some(None)
+        // ("clear"). So replaying from the log doesn't detach the task.
+        let mut mem = ProjectState::default();
+        for op in read_all_operations(&conn).unwrap() {
+            let _ = mem.apply(op);
+        }
+        assert_eq!(
+            mem.epics[&epic_id].status,
+            Status::Done,
+            "epic status agrees (Done from auto-close)"
+        );
+        assert!(
+            !mem.epics[&epic_id].task_ids.is_empty(),
+            "DIVERGENCE: replay keeps task in epic (Some(None) → null → None on serde roundtrip)"
+        );
+    }
+
+    // ── Category 6: Replay Safety ─────────────────────────────────────
+
+    #[test]
+    fn test_replay_mixed_valid_and_ghost_ops() {
+        // Write a mix of valid and ghost ops. Replay onto fresh ProjectState:
+        // valid ops succeed, ghost ops return Err. No panics.
+        let (_dir, conn) = setup_db();
+
+        let valid_ops = [
+            make_op(OperationKind::InitProject {
+                name: "Replay Test".to_string(),
+                description: None,
+                epic_prefix: None,
+                task_prefix: None,
+                auto_materialize: None,
+                materialize_path: None,
+            }),
+            make_op(OperationKind::CreateTask {
+                id: "TASK-001".parse().unwrap(),
+                title: "Real 1".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            }),
+            make_op(OperationKind::CreateTask {
+                id: "TASK-002".parse().unwrap(),
+                title: "Real 2".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            }),
+        ];
+
+        let ghost_ops = [
+            make_op(OperationKind::UpdateTask {
+                id: "TASK-999".parse().unwrap(),
+                title: Some("Ghost".to_string()),
+                description: None,
+                priority: None,
+                epic_id: None,
+                assignee: None,
+            }),
+            make_op(OperationKind::ClaimTask {
+                id: "TASK-888".parse().unwrap(),
+            }),
+            make_op(OperationKind::CompleteTask {
+                id: "TASK-777".parse().unwrap(),
+            }),
+        ];
+
+        // All 6 succeed at DB level
+        for op in valid_ops.iter().chain(ghost_ops.iter()) {
+            write_operation(&conn, op).unwrap();
+        }
+        assert_eq!(query_count(&conn, "SELECT COUNT(*) FROM operations"), 6);
+
+        // Replay onto fresh state
+        let mut mem = ProjectState::default();
+        let mut ok_count = 0;
+        let mut err_count = 0;
+        for op in read_all_operations(&conn).unwrap() {
+            match mem.apply(op) {
+                Ok(()) => ok_count += 1,
+                Err(_) => err_count += 1,
+            }
+        }
+
+        assert_eq!(ok_count, 3, "3 valid ops should succeed");
+        assert_eq!(err_count, 3, "3 ghost ops should fail");
+        assert_eq!(mem.tasks.len(), 2, "only 2 real tasks in replayed state");
+    }
+
+    #[test]
+    fn test_compact_makes_log_replay_impossible() {
+        // After compact, the log is empty. Replaying from the log produces an
+        // empty state. But load_state returns the full materialized state.
+        // This documents that post-compact the system cannot be rebuilt from log alone.
+        let (_dir, conn) = setup_db();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::InitProject {
+                name: "Compact Replay".to_string(),
+                description: None,
+                epic_prefix: None,
+                task_prefix: None,
+                auto_materialize: None,
+                materialize_path: None,
+            }),
+        )
+        .unwrap();
+
+        for i in 1..=5 {
+            write_operation(
+                &conn,
+                &make_op(OperationKind::CreateTask {
+                    id: ItemId::new("TASK", i),
+                    title: format!("Task {i}"),
+                    description: None,
+                    priority: Priority::Medium,
+                    epic_id: None,
+                }),
+            )
+            .unwrap();
+        }
+
+        compact_db(&conn).unwrap();
+
+        // Log is empty
+        let ops = read_all_operations(&conn).unwrap();
+        assert!(ops.is_empty(), "log should be empty after compact");
+
+        // Replay from empty log → empty state
+        let mut replayed = ProjectState::default();
+        for op in &ops {
+            let _ = replayed.apply(op.clone());
+        }
+        assert!(replayed.config.is_none());
+        assert!(replayed.tasks.is_empty());
+
+        // load_state → full materialized state
+        let db_state = load_state(&conn).unwrap();
+        assert!(db_state.config.is_some());
+        assert_eq!(db_state.tasks.len(), 5);
+    }
+
+    #[test]
+    fn test_rollback_on_inner_failure() {
+        // If apply_to_db fails (e.g., table dropped), the transaction should
+        // rollback: no partial log entry.
+        let (_dir, conn) = setup_db();
+
+        // Sabotage: drop the tasks table
+        conn.execute_batch("DROP TABLE tasks").unwrap();
+
+        // write_operation should fail
+        let result = write_operation(
+            &conn,
+            &make_op(OperationKind::CreateTask {
+                id: "TASK-001".parse().unwrap(),
+                title: "Doomed".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            }),
+        );
+        assert!(
+            result.is_err(),
+            "write should fail when tasks table is dropped"
+        );
+
+        // Rollback prevented the log entry
+        assert_eq!(
+            query_count(&conn, "SELECT COUNT(*) FROM operations"),
+            0,
+            "rollback should prevent partial log entry"
+        );
+    }
 }
