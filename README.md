@@ -56,7 +56,7 @@ mv swarmit /usr/local/bin/
 ```bash
 git clone https://github.com/zeapo/swarmit
 cd swarmit
-cargo install --path crates/swarmit
+cargo install --path .
 ```
 
 Requires Rust 1.80+.
@@ -150,6 +150,29 @@ Full reference: [`plugin/skills/swarmit/cli-reference.md`](plugin/skills/swarmit
 
 ---
 
+## Markdown materialization
+
+Swarmit can export its state as markdown files — one file per epic and task. This is a
+**downstream, one-way export**: swarmit writes markdown from its event log, never the reverse.
+Editing the markdown files has no effect on swarmit state.
+
+By default, auto-materialization is off. Enable it in your project config:
+
+```bash
+swarmit init --name "My Project" --auto-materialize --agent me
+# or update an existing project:
+swarmit project update --auto-materialize true --agent me
+```
+
+You can also run `swarmit sync` at any time to generate (or regenerate) all markdown:
+
+```bash
+swarmit sync                        # writes to .swarmit/state/ (default)
+swarmit sync --path ./docs/tasks    # writes to a custom directory
+```
+
+---
+
 ## TUI
 
 Run `swarmit` with no arguments in a TTY to open the live dashboard:
@@ -211,14 +234,21 @@ SWARMIT_THEME=macchiato swarmit
 ## Project layout
 
 ```
-crates/
-  swarmit-core/   # Models, event sourcing, state materializer
-  swarmit-cli/    # CLI commands (clap)
-  swarmit-tui/    # Terminal UI (ratatui + crossterm)
-  swarmit/        # Binary entry point + mode detection
+src/
+  main.rs         # Binary entry point (mode detection)
+  lib.rs          # Public API, re-exports
+  models/         # Domain types: Task, Epic, ItemId, Status, etc.
+  events/         # Event sourcing: Operation, append, locking
+  state/          # Materializer, snapshot, index, markdown sync
+  cli/            # CLI commands (clap)
+  tui/            # Terminal UI (ratatui + crossterm)
 plugin/
   skills/
     swarmit/      # Claude Code skill files
+.swarmit/
+  operations.log  # Append-only event log (source of truth)
+  project.toml    # Project config
+  state/          # Optional materialized markdown (downstream output)
 ```
 
 ---

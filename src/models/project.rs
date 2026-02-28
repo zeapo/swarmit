@@ -14,6 +14,12 @@ pub struct ProjectConfig {
     /// Prefix used for task IDs (default: "TASK")
     #[serde(default = "default_task_prefix")]
     pub task_prefix: String,
+    /// Whether to auto-materialize markdown on every mutation (default: false)
+    #[serde(default)]
+    pub auto_materialize: bool,
+    /// Path for materialized markdown, relative to .swarmit/ (default: "state")
+    #[serde(default = "default_materialize_path")]
+    pub materialize_path: String,
     pub created_at: DateTime<Utc>,
     pub created_by: AgentId,
 }
@@ -24,6 +30,10 @@ fn default_epic_prefix() -> String {
 
 fn default_task_prefix() -> String {
     "TASK".to_string()
+}
+
+fn default_materialize_path() -> String {
+    "state".to_string()
 }
 
 /// In-memory project state summary.
@@ -42,6 +52,8 @@ impl ProjectConfig {
             description: None,
             epic_prefix: default_epic_prefix(),
             task_prefix: default_task_prefix(),
+            auto_materialize: false,
+            materialize_path: default_materialize_path(),
             created_at: Utc::now(),
             created_by,
         }

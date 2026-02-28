@@ -26,6 +26,8 @@ fn setup_project(dir: &TempDir) -> (std::path::PathBuf, std::path::PathBuf) {
             description: None,
             epic_prefix: None,
             task_prefix: None,
+            auto_materialize: None,
+            materialize_path: None,
         },
     );
     try_append_with_timeout(&lock, || append_operation(&log, &init_op)).unwrap();

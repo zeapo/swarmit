@@ -8,6 +8,7 @@ use crate::events::locking::try_append_with_timeout;
 use crate::events::log::append_operation;
 use crate::events::operations::{Operation, OperationKind};
 use crate::models::{AgentId, ProjectConfig};
+use crate::state::ProjectState;
 
 use crate::cli::output::{print_json_ok, OutputMode};
 use crate::cli::Cli;
@@ -33,6 +34,14 @@ pub struct InitArgs {
     /// Project description
     #[arg(long)]
     pub description: Option<String>,
+
+    /// Enable auto-materialization of markdown on every mutation
+    #[arg(long)]
+    pub auto_materialize: bool,
+
+    /// Path for materialized markdown, relative to .swarmit/ (default: state)
+    #[arg(long)]
+    pub materialize_path: Option<String>,
 }
 
 pub fn run(args: &InitArgs, cli: &Cli) -> Result<()> {
@@ -47,14 +56,17 @@ pub fn run(args: &InitArgs, cli: &Cli) -> Result<()> {
         bail!("Project already initialized at {}", swarmit_dir.display());
     }
 
-    // Create directory structure
-    fs::create_dir_all(swarmit_dir.join("state").join("epics"))?;
-    fs::create_dir_all(swarmit_dir.join("state").join("backlog"))?;
+    fs::create_dir_all(&swarmit_dir)?;
 
     let log_path = swarmit_dir.join("operations.log");
     let lock_path = swarmit_dir.join("operations.lock");
 
     // Write the init operation
+    let auto_mat = if args.auto_materialize {
+        Some(true)
+    } else {
+        None
+    };
     let op = Operation::new(
         agent.clone(),
         OperationKind::InitProject {
@@ -62,6 +74,8 @@ pub fn run(args: &InitArgs, cli: &Cli) -> Result<()> {
             description: args.description.clone(),
             epic_prefix: args.epic_prefix.clone(),
             task_prefix: args.task_prefix.clone(),
+            auto_materialize: auto_mat,
+            materialize_path: args.materialize_path.clone(),
         },
     );
 
@@ -80,6 +94,11 @@ pub fn run(args: &InitArgs, cli: &Cli) -> Result<()> {
             .task_prefix
             .clone()
             .unwrap_or_else(|| "TASK".to_string()),
+        auto_materialize: args.auto_materialize,
+        materialize_path: args
+            .materialize_path
+            .clone()
+            .unwrap_or_else(|| "state".to_string()),
         created_at: Utc::now(),
         created_by: agent,
     };
@@ -114,6 +133,11 @@ pub fn toml_serialize(config: &ProjectConfig) -> Result<String> {
     }
     s.push_str(&format!("epic_prefix = {:?}\n", config.epic_prefix));
     s.push_str(&format!("task_prefix = {:?}\n", config.task_prefix));
+    s.push_str(&format!("auto_materialize = {}\n", config.auto_materialize));
+    s.push_str(&format!(
+        "materialize_path = {:?}\n",
+        config.materialize_path
+    ));
     s.push_str(&format!(
         "created_at = {:?}\n",
         config.created_at.to_rfc3339()
@@ -157,6 +181,21 @@ pub fn resolve_project_root(cli: &Cli) -> Result<PathBuf> {
 
     // Default to cwd for init
     Ok(cwd)
+}
+
+/// Returns true if the project config has auto_materialize enabled.
+pub fn should_materialize(state: &ProjectState) -> bool {
+    state.config.as_ref().is_some_and(|c| c.auto_materialize)
+}
+
+/// Returns the materialization directory, resolved relative to the .swarmit/ dir.
+pub fn materialize_path(swarmit_dir: &std::path::Path, state: &ProjectState) -> PathBuf {
+    let rel = state
+        .config
+        .as_ref()
+        .map(|c| c.materialize_path.as_str())
+        .unwrap_or("state");
+    swarmit_dir.join(rel)
 }
 
 /// Like resolve_project_root but fails if .swarmit doesn't exist.

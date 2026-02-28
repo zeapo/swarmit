@@ -24,6 +24,9 @@ pub enum OperationKind {
         description: Option<String>,
         epic_prefix: Option<String>,
         task_prefix: Option<String>,
+        #[serde(default)]
+        auto_materialize: Option<bool>,
+        materialize_path: Option<String>,
     },
     UpdateProject {
         name: Option<String>,
@@ -32,6 +35,9 @@ pub enum OperationKind {
         /// When true, clears the description (takes precedence over `description`)
         #[serde(default)]
         clear_description: bool,
+        #[serde(default)]
+        auto_materialize: Option<bool>,
+        materialize_path: Option<String>,
     },
 
     // ── Epic ─────────────────────────────────────────────────────────────

@@ -108,6 +108,8 @@ mod tests {
                     description: None,
                     epic_prefix: None,
                     task_prefix: None,
+                    auto_materialize: None,
+                    materialize_path: None,
                 }),
                 make_op(OperationKind::CreateTask {
                     id: task_id.clone(),

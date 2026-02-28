@@ -12,7 +12,7 @@ use crate::cli::output::{print_json_ok, OutputMode};
 use crate::cli::Cli;
 
 use super::epic::{parse_priority, parse_status};
-use super::init::{require_project_root, resolve_agent};
+use super::init::{materialize_path, require_project_root, resolve_agent, should_materialize};
 
 #[derive(Args, Debug)]
 pub struct TaskArgs {
@@ -189,8 +189,10 @@ fn create(args: &TaskCreateArgs, cli: &Cli) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let (post_state, _) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
-    let state_dir = swarmit.join("state");
-    materialize_task_from_state(&state_dir, &post_state, &next_id)?;
+    if should_materialize(&post_state) {
+        let state_dir = materialize_path(&swarmit, &post_state);
+        materialize_task_from_state(&state_dir, &post_state, &next_id)?;
+    }
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
     let _ = crate::check_and_write_snapshot(
@@ -486,22 +488,24 @@ fn update(args: &TaskUpdateArgs, cli: &Cli) -> Result<()> {
     .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let (post_state, _) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
-    let state_dir = swarmit.join("state");
-    let post_epic_id = post_state.tasks.get(&id).and_then(|t| t.epic_id.clone());
-    // If task moved epics, clean up the stale file in the old epic directory
-    if pre_epic_id != post_epic_id {
-        if let Some(old_eid) = &pre_epic_id {
-            if let Some(old_epic) = state.epics.get(old_eid) {
-                markdown::remove_task_file(&state_dir, &id, Some(old_epic))
-                    .map_err(|e| anyhow::anyhow!("Failed to remove stale markdown: {}", e))?;
-                // Re-materialize old epic so its directory reflects the removed task
-                let old_tasks = post_state.tasks_for_epic(old_eid);
-                markdown::materialize_epic(&state_dir, old_epic, &old_tasks)
-                    .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
+    if should_materialize(&post_state) {
+        let state_dir = materialize_path(&swarmit, &post_state);
+        let post_epic_id = post_state.tasks.get(&id).and_then(|t| t.epic_id.clone());
+        // If task moved epics, clean up the stale file in the old epic directory
+        if pre_epic_id != post_epic_id {
+            if let Some(old_eid) = &pre_epic_id {
+                if let Some(old_epic) = state.epics.get(old_eid) {
+                    markdown::remove_task_file(&state_dir, &id, Some(old_epic))
+                        .map_err(|e| anyhow::anyhow!("Failed to remove stale markdown: {}", e))?;
+                    // Re-materialize old epic so its directory reflects the removed task
+                    let old_tasks = post_state.tasks_for_epic(old_eid);
+                    markdown::materialize_epic(&state_dir, old_epic, &old_tasks)
+                        .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
+                }
             }
         }
+        materialize_task_from_state(&state_dir, &post_state, &id)?;
     }
-    materialize_task_from_state(&state_dir, &post_state, &id)?;
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
     let _ = crate::check_and_write_snapshot(
@@ -548,9 +552,11 @@ fn delete(args: &TaskDeleteArgs, cli: &Cli) -> Result<()> {
     try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let state_dir = swarmit.join("state");
-    markdown::remove_task_file(&state_dir, &id, pre_epic.as_ref())
-        .map_err(|e| anyhow::anyhow!("Failed to remove markdown: {}", e))?;
+    if should_materialize(&pre_state) {
+        let state_dir = materialize_path(&swarmit, &pre_state);
+        markdown::remove_task_file(&state_dir, &id, pre_epic.as_ref())
+            .map_err(|e| anyhow::anyhow!("Failed to remove markdown: {}", e))?;
+    }
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
     let (post_state, _) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -592,8 +598,10 @@ fn claim(args: &TaskClaimArgs, cli: &Cli) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let (post_state, _) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
-    let state_dir = swarmit.join("state");
-    materialize_task_from_state(&state_dir, &post_state, &id)?;
+    if should_materialize(&post_state) {
+        let state_dir = materialize_path(&swarmit, &post_state);
+        materialize_task_from_state(&state_dir, &post_state, &id)?;
+    }
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
     let _ = crate::check_and_write_snapshot(
@@ -636,8 +644,10 @@ fn done(args: &TaskDoneArgs, cli: &Cli) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let (post_state, _) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
-    let state_dir = swarmit.join("state");
-    materialize_task_from_state(&state_dir, &post_state, &id)?;
+    if should_materialize(&post_state) {
+        let state_dir = materialize_path(&swarmit, &post_state);
+        materialize_task_from_state(&state_dir, &post_state, &id)?;
+    }
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
     let _ = crate::check_and_write_snapshot(

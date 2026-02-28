@@ -51,6 +51,8 @@ impl ProjectState {
                 description,
                 epic_prefix,
                 task_prefix,
+                auto_materialize,
+                materialize_path,
             } => {
                 let mut config = ProjectConfig::new(name, op.agent);
                 config.description = description;
@@ -60,6 +62,12 @@ impl ProjectState {
                 if let Some(p) = task_prefix {
                     config.task_prefix = p;
                 }
+                if let Some(v) = auto_materialize {
+                    config.auto_materialize = v;
+                }
+                if let Some(p) = materialize_path {
+                    config.materialize_path = p;
+                }
                 config.created_at = op.timestamp;
                 self.config = Some(config);
             }
@@ -68,6 +76,8 @@ impl ProjectState {
                 name,
                 description,
                 clear_description,
+                auto_materialize,
+                materialize_path,
             } => {
                 let config = self.config.as_mut().ok_or_else(|| {
                     SwarmitError::NotInitialized("Cannot update project before init".into())
@@ -79,6 +89,12 @@ impl ProjectState {
                     config.description = None;
                 } else if let Some(d) = description {
                     config.description = Some(d);
+                }
+                if let Some(v) = auto_materialize {
+                    config.auto_materialize = v;
+                }
+                if let Some(p) = materialize_path {
+                    config.materialize_path = p;
                 }
             }
 
@@ -434,6 +450,8 @@ mod tests {
                 description: None,
                 epic_prefix: None,
                 task_prefix: None,
+                auto_materialize: None,
+                materialize_path: None,
             }))
             .unwrap();
         assert_eq!(state.config.as_ref().unwrap().name, "Test Project");
@@ -448,6 +466,8 @@ mod tests {
                 description: None,
                 epic_prefix: None,
                 task_prefix: None,
+                auto_materialize: None,
+                materialize_path: None,
             }))
             .unwrap();
 
@@ -850,6 +870,8 @@ mod tests {
             description: None,
             epic_prefix: None,
             task_prefix: None,
+            auto_materialize: None,
+            materialize_path: None,
         })
     }
 
@@ -864,6 +886,8 @@ mod tests {
                 name: Some("New Name".to_string()),
                 description: None,
                 clear_description: false,
+                auto_materialize: None,
+                materialize_path: None,
             }))
             .unwrap();
 
@@ -882,6 +906,8 @@ mod tests {
                 name: None,
                 description: Some("A description".to_string()),
                 clear_description: false,
+                auto_materialize: None,
+                materialize_path: None,
             }))
             .unwrap();
         assert_eq!(
@@ -895,6 +921,8 @@ mod tests {
                 name: None,
                 description: None,
                 clear_description: true,
+                auto_materialize: None,
+                materialize_path: None,
             }))
             .unwrap();
         assert!(state.config.as_ref().unwrap().description.is_none());
@@ -907,6 +935,8 @@ mod tests {
             name: Some("Name".to_string()),
             description: None,
             clear_description: false,
+            auto_materialize: None,
+            materialize_path: None,
         }));
         assert!(result.is_err());
         assert!(matches!(

@@ -20,6 +20,8 @@ fn init_op(name: &str) -> Operation {
             description: None,
             epic_prefix: None,
             task_prefix: None,
+            auto_materialize: None,
+            materialize_path: None,
         },
     )
 }

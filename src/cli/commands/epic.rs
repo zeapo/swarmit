@@ -10,7 +10,7 @@ use crate::state::markdown;
 use crate::cli::output::{print_json_ok, OutputMode};
 use crate::cli::Cli;
 
-use super::init::{require_project_root, resolve_agent};
+use super::init::{materialize_path, require_project_root, resolve_agent, should_materialize};
 
 #[derive(Args, Debug)]
 pub struct EpicArgs {
@@ -125,12 +125,14 @@ fn create(args: &EpicCreateArgs, cli: &Cli) -> Result<()> {
     try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let state_dir = swarmit.join("state");
     let (post_state, _) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
-    if let Some(epic) = post_state.epics.get(&next_id) {
-        let tasks = post_state.tasks_for_epic(&next_id);
-        markdown::materialize_epic(&state_dir, epic, &tasks)
-            .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
+    if should_materialize(&post_state) {
+        let state_dir = materialize_path(&swarmit, &post_state);
+        if let Some(epic) = post_state.epics.get(&next_id) {
+            let tasks = post_state.tasks_for_epic(&next_id);
+            markdown::materialize_epic(&state_dir, epic, &tasks)
+                .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
+        }
     }
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
@@ -327,12 +329,14 @@ fn update(args: &EpicUpdateArgs, cli: &Cli) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("{}", e))?;
     }
 
-    let state_dir = swarmit.join("state");
     let (post_state, _) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
-    if let Some(epic) = post_state.epics.get(&id) {
-        let tasks = post_state.tasks_for_epic(&id);
-        markdown::materialize_epic(&state_dir, epic, &tasks)
-            .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
+    if should_materialize(&post_state) {
+        let state_dir = materialize_path(&swarmit, &post_state);
+        if let Some(epic) = post_state.epics.get(&id) {
+            let tasks = post_state.tasks_for_epic(&id);
+            markdown::materialize_epic(&state_dir, epic, &tasks)
+                .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
+        }
     }
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);
@@ -375,10 +379,12 @@ fn delete(args: &EpicDeleteArgs, cli: &Cli) -> Result<()> {
     try_append_with_timeout(&lock_path, || append_operation(&log_path, &op))
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let state_dir = swarmit.join("state");
-    if let Some(epic) = &pre_epic {
-        markdown::remove_epic(&state_dir, epic)
-            .map_err(|e| anyhow::anyhow!("Failed to remove markdown: {}", e))?;
+    if should_materialize(&pre_state) {
+        let state_dir = materialize_path(&swarmit, &pre_state);
+        if let Some(epic) = &pre_epic {
+            markdown::remove_epic(&state_dir, epic)
+                .map_err(|e| anyhow::anyhow!("Failed to remove markdown: {}", e))?;
+        }
     }
 
     let log_len = std::fs::metadata(&log_path).map(|m| m.len()).unwrap_or(0);

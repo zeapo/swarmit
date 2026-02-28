@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Args;
+use std::path::PathBuf;
 
 use crate::state::markdown;
 
@@ -9,14 +10,28 @@ use crate::cli::Cli;
 use super::init::require_project_root;
 
 #[derive(Args, Debug)]
-pub struct SyncArgs {}
+pub struct SyncArgs {
+    /// Output directory for materialized markdown (overrides project config)
+    #[arg(long)]
+    pub path: Option<String>,
+}
 
-pub fn run(_args: &SyncArgs, cli: &Cli) -> Result<()> {
+pub fn run(args: &SyncArgs, cli: &Cli) -> Result<()> {
     let root = require_project_root(cli)?;
     let swarmit = root.join(".swarmit");
-    let state_dir = swarmit.join("state");
 
     let (state, _log_offset) = crate::load_state(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let state_dir: PathBuf = if let Some(p) = &args.path {
+        PathBuf::from(p)
+    } else {
+        let rel = state
+            .config
+            .as_ref()
+            .map(|c| c.materialize_path.as_str())
+            .unwrap_or("state");
+        swarmit.join(rel)
+    };
 
     let mut epic_count = 0usize;
     let mut task_count = 0usize;
@@ -45,6 +60,7 @@ pub fn run(_args: &SyncArgs, cli: &Cli) -> Result<()> {
         OutputMode::Json => print_json_ok(serde_json::json!({
             "epics": epic_count,
             "tasks": task_count,
+            "path": state_dir.display().to_string(),
         })),
         OutputMode::Pretty => println!(
             "Materialized {} epic(s), {} task(s) → {}",

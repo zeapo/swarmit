@@ -42,6 +42,14 @@ pub struct ProjectUpdateArgs {
     #[arg(long)]
     pub clear_description: bool,
 
+    /// Enable or disable auto-materialization of markdown on every mutation
+    #[arg(long)]
+    pub auto_materialize: Option<bool>,
+
+    /// Path for materialized markdown, relative to .swarmit/ (default: state)
+    #[arg(long)]
+    pub materialize_path: Option<String>,
+
     #[arg(long)]
     pub agent: Option<String>,
 }
@@ -70,6 +78,8 @@ fn show(_args: &ProjectShowArgs, cli: &Cli) -> Result<()> {
                 "description": config.description,
                 "epic_prefix": config.epic_prefix,
                 "task_prefix": config.task_prefix,
+                "auto_materialize": config.auto_materialize,
+                "materialize_path": config.materialize_path,
                 "created_at": config.created_at.to_rfc3339(),
                 "created_by": config.created_by.to_string(),
             }));
@@ -77,15 +87,17 @@ fn show(_args: &ProjectShowArgs, cli: &Cli) -> Result<()> {
         OutputMode::Pretty => {
             println!("Project: {}", config.name);
             if let Some(d) = &config.description {
-                println!("  Description: {}", d);
+                println!("  Description:       {}", d);
             }
-            println!("  Epic prefix:  {}", config.epic_prefix);
-            println!("  Task prefix:  {}", config.task_prefix);
+            println!("  Epic prefix:       {}", config.epic_prefix);
+            println!("  Task prefix:       {}", config.task_prefix);
+            println!("  Auto-materialize:  {}", config.auto_materialize);
+            println!("  Materialize path:  {}", config.materialize_path);
             println!(
-                "  Created at:   {}",
+                "  Created at:        {}",
                 config.created_at.format("%Y-%m-%d %H:%M:%S UTC")
             );
-            println!("  Created by:   {}", config.created_by);
+            println!("  Created by:        {}", config.created_by);
         }
     }
 
@@ -93,8 +105,13 @@ fn show(_args: &ProjectShowArgs, cli: &Cli) -> Result<()> {
 }
 
 fn update(args: &ProjectUpdateArgs, cli: &Cli) -> Result<()> {
-    if args.name.is_none() && args.description.is_none() && !args.clear_description {
-        anyhow::bail!("Nothing to update. Provide --name, --description, or --clear-description.");
+    if args.name.is_none()
+        && args.description.is_none()
+        && !args.clear_description
+        && args.auto_materialize.is_none()
+        && args.materialize_path.is_none()
+    {
+        anyhow::bail!("Nothing to update. Provide --name, --description, --clear-description, --auto-materialize, or --materialize-path.");
     }
 
     let agent_str = resolve_agent(cli, &args.agent)?;
@@ -122,6 +139,8 @@ fn update(args: &ProjectUpdateArgs, cli: &Cli) -> Result<()> {
                 args.description.clone()
             },
             clear_description: args.clear_description,
+            auto_materialize: args.auto_materialize,
+            materialize_path: args.materialize_path.clone(),
         },
     );
 
