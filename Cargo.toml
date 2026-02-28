@@ -1,22 +1,30 @@
-[workspace]
-members = [
-    "crates/swarmit-core",
-    "crates/swarmit-cli",
-    "crates/swarmit-tui",
-    "crates/swarmit",
-]
-resolver = "2"
-
-[workspace.package]
-version = "1.0.0"
+[package]
+name = "swarmit"
+version = "1.0.1"
 edition = "2021"
-authors = ["Swarmit Contributors"]
-license = "MIT"
+authors = ["zeapo"]
+license = "Apache-2.0"
+description = "Local-first project management for multi-agent workflows"
+repository = "https://github.com/zeapo/swarmit"
+keywords = ["project-management", "agents", "tui", "cli"]
+categories = ["command-line-utilities", "development-tools"]
 
-[workspace.dependencies]
+[lib]
+name = "swarmit"
+path = "src/lib.rs"
+
+[[bin]]
+name = "swarmit"
+path = "src/main.rs"
+
+[features]
+profiling = ["dep:tracing", "dep:tracing-chrome", "dep:tracing-subscriber"]
+
+[dependencies]
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+rmp-serde = "1"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
@@ -39,16 +47,16 @@ notify = "8"
 notify-debouncer-mini = "0.7"
 catppuccin = { version = "2", features = ["ratatui"] }
 terminal-colorsaurus = "1"
+bat = { version = "0.26", default-features = false, features = ["regex-fancy"] }
+syntect = { version = "5", default-features = false }
 
 # Profiling (optional)
-tracing = "0.1"
-tracing-chrome = "0.7"
-tracing-subscriber = "0.3"
+tracing = { version = "0.1", optional = true }
+tracing-chrome = { version = "0.7", optional = true }
+tracing-subscriber = { version = "0.3", optional = true }
 
-# Internal
-swarmit-core = { path = "crates/swarmit-core" }
-swarmit-cli = { path = "crates/swarmit-cli" }
-swarmit-tui = { path = "crates/swarmit-tui" }
+[dev-dependencies]
+tempfile = "3"
 
 [profile.release]
-debug = true
+debug = false
