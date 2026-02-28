@@ -38,6 +38,14 @@ Break a project into epics and tasks, set up dependency graphs, then let multipl
 
 ## Install
 
+### From crates.io (recommended)
+
+```bash
+cargo install swarmit
+```
+
+Requires Rust 1.80+. Published at [crates.io/crates/swarmit](https://crates.io/crates/swarmit).
+
 ### Pre-built binaries
 
 Download the latest release from [GitHub Releases](https://github.com/zeapo/swarmit/releases):
@@ -58,8 +66,6 @@ git clone https://github.com/zeapo/swarmit
 cd swarmit
 cargo install --path .
 ```
-
-Requires Rust 1.80+.
 
 ---
 
@@ -238,16 +244,15 @@ src/
   main.rs         # Binary entry point (mode detection)
   lib.rs          # Public API, re-exports
   models/         # Domain types: Task, Epic, ItemId, Status, etc.
-  events/         # Event sourcing: Operation, append, locking
-  state/          # Materializer, snapshot, index, markdown sync
+  events/         # Event sourcing: Operation, OperationKind
+  state/          # SQLite DB layer, materializer, markdown sync
   cli/            # CLI commands (clap)
   tui/            # Terminal UI (ratatui + crossterm)
 plugin/
   skills/
     swarmit/      # Claude Code skill files
 .swarmit/
-  operations.log  # Append-only event log (source of truth)
-  project.toml    # Project config
+  state.db        # SQLite database (WAL mode, single source of truth)
   state/          # Optional materialized markdown (downstream output)
 ```
 
