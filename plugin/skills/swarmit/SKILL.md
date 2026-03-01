@@ -49,7 +49,14 @@ Add one insight per file changed. `--before` and `--after` are optional.
 swarmit task done TASK-007 --agent me
 ```
 
-### 6. Pick the next task
+### 6. Cancel tasks that are no longer relevant
+If a task becomes unnecessary, cancel it with a reason instead of leaving it:
+```bash
+swarmit task cancel TASK-007 --reason "superseded by new approach" --agent me
+```
+Cancelled tasks are hidden from default listings. Use `--all` or `--status cancelled` to see them.
+
+### 7. Pick the next task
 Loop back to step 1.
 
 ---
@@ -65,8 +72,11 @@ Loop back to step 1.
 | `swarmit task show TASK-007` | Full task detail with relationships & comments |
 | `swarmit task claim TASK-007 --agent me` | Claim a task |
 | `swarmit task done TASK-007 --agent me` | Mark task complete |
+| `swarmit task cancel TASK-007 --reason "..." --agent me` | Cancel task with reason |
 | `swarmit task create --title "..." --description "..." --epic EPIC-001 --agent me` | Create task |
+| `swarmit task list --all` | List all tasks including cancelled |
 | `swarmit epic list --json` | List epics |
+| `swarmit epic cancel EPIC-001 --reason "..." --agent me` | Cancel epic + cascade to tasks |
 | `swarmit epic show EPIC-001` | Epic details |
 | `swarmit link add --from TASK-001 --to TASK-002 --type blocks --agent me` | Add relationship |
 | `swarmit comment add TASK-007 --body "..." --agent me` | Add comment |
@@ -150,6 +160,7 @@ Never leave a task claimed but unfinished without a comment explaining why. Neve
 5. **Comment on progress** — other agents (and humans) can see your notes in the TUI.
 6. **Add insights when completing tasks** — one per file changed, documenting what and why.
 7. **Check for blockers** — use `task show` to see if a task is blocked by others.
+8. **Cancel stale tasks** — if a task is no longer relevant, cancel it with `task cancel --reason` rather than leaving it open. Cancelled tasks are hidden from default listings.
 
 ---
 

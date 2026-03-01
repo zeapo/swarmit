@@ -421,6 +421,6 @@ mod tests {
         let mut h = TuiTestHarness::new();
         h.render();
         // Status bar is on the last row (row 23 in an 80×24 terminal)
-        h.assert_row_contains(23, "[All]");
+        h.assert_row_contains(23, "[Active]");
     }
 }

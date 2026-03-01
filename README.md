@@ -2,39 +2,7 @@
 
 ![Swarmit demo](docs/demo.webp)
 
-**Persistent task coordination for AI coding agents.**
-
-AI coding agents try to maintain context through markdown plans and limited subagent memory — but those are fragile, siloed, and invisible to other agents. Swarmit replaces that with a shared, persistent task board every agent reads and writes through the same CLI. One source of truth across sessions and agents.
-
-Break a project into epics and tasks, set up dependency graphs, then let multiple agents pick up work in parallel — each one aware of what the others are doing. Come back tomorrow and the plan is still there, with full history of who did what.
-
----
-
-## Why Swarmit
-
-**Long-term planning.** Agents create epics with tasks, dependencies, and priorities that survive across sessions. Pick up where you left off — or let a fresh agent continue the work.
-
-**Multi-agent collaboration.** Multiple agents claim tasks before starting, leave progress comments, and mark work done — all through the same CLI. No duplicate work, no stepping on each other.
-
-**Full visibility.** A live terminal dashboard shows what's happening right now: who's working on what, what's blocked, what's done. Every mutation is recorded in an append-only event log with complete history.
-
-**Agent-native.** JSON output on every command. Pipe-friendly. Comes with a Claude Code skill that teaches agents the workflow automatically.
-
-```
-  Agent A          Agent B          Agent C
-    │                 │                │
-    │  swarmit CLI    │  swarmit CLI   │  swarmit CLI
-    └────────┬────────┘                │
-             ▼                         │
-       shared task state  ◄────────────┘
-             │
-             ▼
-         swarmit TUI
-    (live-refreshing dashboard
-     you watch while agents run)
-```
-
----
+Persistent task coordination for AI coding agents. Break projects into epics and tasks with dependency graphs, let multiple agents claim and complete work in parallel, and watch progress in a live terminal dashboard. State persists across sessions in a single SQLite database.
 
 ## Install
 
@@ -67,8 +35,6 @@ cd swarmit
 cargo install --path .
 ```
 
----
-
 ## Quick start
 
 ```bash
@@ -89,20 +55,9 @@ swarmit task done  TASK-002 --agent claude-1
 
 All mutation commands require `--agent <ID>` (or `SWARMIT_AGENT` env var). Output is pretty-printed on a TTY and JSON when piped — useful for scripting and agent-to-agent communication.
 
----
-
 ## Claude Code plugin
 
-The plugin teaches Claude Code agents to use swarmit instead of the built-in todo tools. Once installed, agents automatically:
-
-- Check for existing tasks before creating new ones
-- Create epics with dependency graphs for multi-step work
-- Claim tasks before starting (prevents duplicate work)
-- Leave progress comments visible in the TUI in real time
-- Mark tasks done when finished — or blocked with an explanation
-- Dispatch parallel subagents in waves based on the dependency graph
-
-**Install:**
+Teaches Claude Code agents to use swarmit instead of the built-in todo tools.
 
 ```
 /plugin marketplace add zeapo/swarmit
@@ -111,11 +66,7 @@ The plugin teaches Claude Code agents to use swarmit instead of the built-in tod
 
 Or copy the skill file manually into your `.claude/skills/` directory — see [`plugin/skills/swarmit/`](plugin/skills/swarmit/).
 
----
-
 ## CLI
-
-### Command groups
 
 | Command | Description |
 |---------|-------------|
@@ -129,8 +80,6 @@ Or copy the skill file manually into your `.claude/skills/` directory — see [`
 | `swarmit compact` | Prune and snapshot history |
 | `swarmit project` | Show or update project metadata |
 | `swarmit sync` | Regenerate markdown files from state |
-
-### Common examples
 
 ```bash
 # List all open tasks
@@ -154,49 +103,11 @@ swarmit log --tail 20
 
 Full reference: [`plugin/skills/swarmit/cli-reference.md`](plugin/skills/swarmit/cli-reference.md)
 
----
-
-## Markdown materialization
-
-Swarmit can export its state as markdown files — one file per epic and task. This is a
-**downstream, one-way export**: swarmit writes markdown from its event log, never the reverse.
-Editing the markdown files has no effect on swarmit state.
-
-By default, auto-materialization is off. Enable it in your project config:
-
-```bash
-swarmit init --name "My Project" --auto-materialize --agent me
-# or update an existing project:
-swarmit project update --auto-materialize true --agent me
-```
-
-You can also run `swarmit sync` at any time to generate (or regenerate) all markdown:
-
-```bash
-swarmit sync                        # writes to .swarmit/state/ (default)
-swarmit sync --path ./docs/tasks    # writes to a custom directory
-```
-
----
-
 ## TUI
 
-Run `swarmit` with no arguments in a TTY to open the live dashboard:
+Run `swarmit` with no arguments to open the live dashboard. It polls for changes and refreshes automatically as agents update state.
 
-```bash
-swarmit
-```
-
-The TUI watches for file changes and refreshes automatically as agents update state. Two-pane layout with collapsible epic groups, three detail tabs (description, comments, insights), and inline editing via `$EDITOR`.
-
-Catppuccin theme with automatic light/dark detection:
-
-```bash
-SWARMIT_THEME=latte     swarmit   # light
-SWARMIT_THEME=mocha     swarmit   # dark
-SWARMIT_THEME=frappe    swarmit
-SWARMIT_THEME=macchiato swarmit
-```
+Catppuccin theme with automatic light/dark detection (`SWARMIT_THEME=latte|mocha|frappe|macchiato`).
 
 ### Key bindings
 
@@ -221,54 +132,31 @@ SWARMIT_THEME=macchiato swarmit
 | `?` | Help |
 | `q` / `Esc` | Quit / back |
 
----
+## Markdown export
 
-## What's in the box
+One-way export of state as markdown files (one per epic and task). Editing the files has no effect on swarmit state.
 
-- Epics and tasks with priority, assignee, and status
-- Typed relationships between items (`blocks`, `blocked_by`, `parent`, `child`, `relates_to`, `duplicates`)
-- Comments and code insights on any task
-- Full history with `swarmit log`
-- JSON output on every command — pipe-friendly for agents and scripts
-- TUI with sort, filter, live refresh, inline editing, and resizable split panes
-- Catppuccin theme with auto dark/light detection
-- Claude Code skill file that wires everything together
-- CI/CD with GitHub Actions — pre-built binaries for Linux and macOS
+```bash
+# Enable auto-export on init
+swarmit init --name "My Project" --auto-materialize --agent me
 
----
+# Or toggle on an existing project
+swarmit project update --auto-materialize true --agent me
 
-## Project layout
-
+# Manual one-off export
+swarmit sync                        # writes to .swarmit/state/ (default)
+swarmit sync --path ./docs/tasks    # writes to a custom directory
 ```
-src/
-  main.rs         # Binary entry point (mode detection)
-  lib.rs          # Public API, re-exports
-  models/         # Domain types: Task, Epic, ItemId, Status, etc.
-  events/         # Event sourcing: Operation, OperationKind
-  state/          # SQLite DB layer, materializer, markdown sync
-  cli/            # CLI commands (clap)
-  tui/            # Terminal UI (ratatui + crossterm)
-plugin/
-  skills/
-    swarmit/      # Claude Code skill files
-.swarmit/
-  state.db        # SQLite database (WAL mode, single source of truth)
-  state/          # Optional materialized markdown (downstream output)
-```
-
----
 
 ## Development
 
 ```bash
-cargo build          # Build all crates
+cargo build          # Build
 cargo test           # Run all tests
 cargo run -- --help  # CLI help
 ```
 
 Tests use `tempfile` for isolated directories — no global state.
-
----
 
 ## License
 

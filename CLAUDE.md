@@ -151,6 +151,8 @@ and is visible to all agents and the TUI.
 
 `todo` · `in_progress` (aliases: `wip`, `inprogress`) · `done` · `blocked` · `cancelled`
 
+Cancelled items are hidden from default `task list` and `epic list` output. Use `--all` to include them, or `--status cancelled` to see only cancelled items. Use `task cancel` / `epic cancel` with `--reason` to cancel (epic cancel cascades to all non-terminal tasks).
+
 ### Before starting work
 
 1. Check for existing tasks: `swarmit task list --json`

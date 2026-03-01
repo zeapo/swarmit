@@ -202,3 +202,174 @@ fn task_lifecycle_round_trip() {
     assert!(task.completed_at.is_some());
     assert_eq!(task.assignee, Some(agent("alice")));
 }
+
+// ── Cancel feature integration tests ──────────────────────────────────
+
+#[test]
+fn cancel_task_roundtrip() {
+    let dir = TempDir::new().unwrap();
+    let conn = setup_db(&dir);
+
+    swarmit::write_operation(&conn, &init_op("Project")).unwrap();
+
+    let task_id: ItemId = "TASK-001".parse().unwrap();
+    swarmit::write_operation(
+        &conn,
+        &Operation::new(
+            agent("alice"),
+            OperationKind::CreateTask {
+                id: task_id.clone(),
+                title: "Do stuff".into(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            },
+        ),
+    )
+    .unwrap();
+
+    swarmit::write_operation(
+        &conn,
+        &Operation::new(
+            agent("alice"),
+            OperationKind::CancelTask {
+                id: task_id.clone(),
+                reason: "no longer relevant".into(),
+            },
+        ),
+    )
+    .unwrap();
+
+    let state = swarmit::load_state(&conn).unwrap();
+    assert_eq!(
+        state.tasks[&task_id].status,
+        swarmit::models::Status::Cancelled
+    );
+    let comments = state.comments_for(&task_id);
+    assert_eq!(comments.len(), 1);
+    assert!(comments[0].body.contains("no longer relevant"));
+}
+
+#[test]
+fn cancel_epic_cascades_and_auto_completes() {
+    let dir = TempDir::new().unwrap();
+    let conn = setup_db(&dir);
+
+    swarmit::write_operation(&conn, &init_op("Project")).unwrap();
+    swarmit::write_operation(&conn, &epic_op("EPIC-001", "Feature")).unwrap();
+
+    let t1: ItemId = "TASK-001".parse().unwrap();
+    let t2: ItemId = "TASK-002".parse().unwrap();
+    let t3: ItemId = "TASK-003".parse().unwrap();
+
+    for (tid, title) in [(&t1, "Task 1"), (&t2, "Task 2"), (&t3, "Task 3")] {
+        swarmit::write_operation(
+            &conn,
+            &Operation::new(
+                agent("alice"),
+                OperationKind::CreateTask {
+                    id: tid.clone(),
+                    title: title.into(),
+                    description: None,
+                    priority: Priority::Medium,
+                    epic_id: Some("EPIC-001".parse().unwrap()),
+                },
+            ),
+        )
+        .unwrap();
+    }
+
+    // Complete t1, leave t2 and t3 as Todo
+    swarmit::write_operation(
+        &conn,
+        &Operation::new(
+            agent("alice"),
+            OperationKind::CompleteTask { id: t1.clone() },
+        ),
+    )
+    .unwrap();
+
+    // Cancel the epic
+    swarmit::write_operation(
+        &conn,
+        &Operation::new(
+            agent("alice"),
+            OperationKind::CancelEpic {
+                id: "EPIC-001".parse().unwrap(),
+                reason: "superseded by EPIC-002".into(),
+            },
+        ),
+    )
+    .unwrap();
+
+    let state = swarmit::load_state(&conn).unwrap();
+    let epic_id: ItemId = "EPIC-001".parse().unwrap();
+
+    assert_eq!(
+        state.epics[&epic_id].status,
+        swarmit::models::Status::Cancelled
+    );
+    assert_eq!(state.tasks[&t1].status, swarmit::models::Status::Done);
+    assert_eq!(state.tasks[&t2].status, swarmit::models::Status::Cancelled);
+    assert_eq!(state.tasks[&t3].status, swarmit::models::Status::Cancelled);
+
+    // Cascade comments on non-terminal tasks only
+    assert!(state.comments_for(&t1).is_empty());
+    assert_eq!(state.comments_for(&t2).len(), 1);
+    assert!(state.comments_for(&t2)[0].body.contains("superseded"));
+    assert_eq!(state.comments_for(&t3).len(), 1);
+}
+
+#[test]
+fn mixed_done_and_cancelled_tasks_auto_close_epic() {
+    let dir = TempDir::new().unwrap();
+    let conn = setup_db(&dir);
+
+    swarmit::write_operation(&conn, &init_op("Project")).unwrap();
+    swarmit::write_operation(&conn, &epic_op("EPIC-001", "Feature")).unwrap();
+
+    let t1: ItemId = "TASK-001".parse().unwrap();
+    let t2: ItemId = "TASK-002".parse().unwrap();
+
+    for tid in [&t1, &t2] {
+        swarmit::write_operation(
+            &conn,
+            &Operation::new(
+                agent("alice"),
+                OperationKind::CreateTask {
+                    id: tid.clone(),
+                    title: format!("Task {}", tid),
+                    description: None,
+                    priority: Priority::Medium,
+                    epic_id: Some("EPIC-001".parse().unwrap()),
+                },
+            ),
+        )
+        .unwrap();
+    }
+
+    // Complete t1, cancel t2 — both terminal → epic auto-closes
+    swarmit::write_operation(
+        &conn,
+        &Operation::new(
+            agent("alice"),
+            OperationKind::CompleteTask { id: t1.clone() },
+        ),
+    )
+    .unwrap();
+    swarmit::write_operation(
+        &conn,
+        &Operation::new(
+            agent("alice"),
+            OperationKind::CancelTask {
+                id: t2.clone(),
+                reason: "not needed".into(),
+            },
+        ),
+    )
+    .unwrap();
+
+    let state = swarmit::load_state(&conn).unwrap();
+    let epic_id: ItemId = "EPIC-001".parse().unwrap();
+    assert_eq!(state.epics[&epic_id].status, swarmit::models::Status::Done);
+}

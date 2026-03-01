@@ -19,7 +19,7 @@ pub fn render(f: &mut Frame, app: &App, selected_index: usize, area: Rect) {
         .enumerate()
         .map(|(i, _)| {
             let label = match FILTER_OPTIONS[i] {
-                None => "All",
+                None => "Active",
                 Some(crate::models::Status::Todo) => "Todo",
                 Some(crate::models::Status::InProgress) => "In Progress",
                 Some(crate::models::Status::Blocked) => "Blocked",

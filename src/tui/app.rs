@@ -1160,13 +1160,15 @@ impl App {
         let mut top: Vec<TopLevel> = Vec::new();
 
         for task in self.state.tasks.values() {
-            if task.epic_id.is_none() && self.dashboard_filter.is_none_or(|f| task.status == f) {
+            if task.epic_id.is_none() && self.matches_dashboard_filter(task.status) {
                 top.push(TopLevel::Task(task.id.clone()));
             }
         }
 
-        for epic_id in self.state.epics.keys() {
-            top.push(TopLevel::Epic(epic_id.clone()));
+        for (epic_id, epic) in &self.state.epics {
+            if self.matches_dashboard_filter(epic.status) {
+                top.push(TopLevel::Epic(epic_id.clone()));
+            }
         }
 
         top.sort_by(|a, b| {
@@ -1211,13 +1213,8 @@ impl App {
                     if !self.collapsed_epics.contains(&epic_id) {
                         for task_id in task_ids {
                             // Apply status filter to epic tasks.
-                            if let Some(filter) = &self.dashboard_filter {
-                                if self
-                                    .state
-                                    .tasks
-                                    .get(&task_id)
-                                    .is_some_and(|t| t.status != *filter)
-                                {
+                            if let Some(task) = self.state.tasks.get(&task_id) {
+                                if !self.matches_dashboard_filter(task.status) {
                                     continue;
                                 }
                             }
@@ -1250,6 +1247,15 @@ impl App {
             if self.selected_index > max {
                 self.selected_index = max;
             }
+        }
+    }
+
+    /// Returns true if the given status matches the current dashboard filter.
+    /// When no explicit filter is set (None / "Active"), cancelled items are hidden.
+    fn matches_dashboard_filter(&self, status: Status) -> bool {
+        match self.dashboard_filter {
+            None => status != Status::Cancelled,
+            Some(f) => status == f,
         }
     }
 

@@ -28,6 +28,8 @@ pub enum EpicCommands {
     Update(EpicUpdateArgs),
     /// Delete an epic
     Delete(EpicDeleteArgs),
+    /// Cancel an epic and all its non-terminal tasks
+    Cancel(EpicCancelArgs),
 }
 
 #[derive(Args, Debug)]
@@ -46,6 +48,9 @@ pub struct EpicCreateArgs {
 pub struct EpicListArgs {
     #[arg(long)]
     pub status: Option<String>,
+    /// Include cancelled epics in the listing
+    #[arg(long)]
+    pub all: bool,
     #[arg(long)]
     pub agent: Option<String>,
 }
@@ -79,6 +84,15 @@ pub struct EpicDeleteArgs {
     pub agent: Option<String>,
 }
 
+#[derive(Args, Debug)]
+pub struct EpicCancelArgs {
+    pub id: String,
+    #[arg(long)]
+    pub reason: String,
+    #[arg(long)]
+    pub agent: Option<String>,
+}
+
 pub fn run(args: &EpicArgs, cli: &Cli) -> Result<()> {
     match &args.command {
         EpicCommands::Create(a) => create(a, cli),
@@ -86,6 +100,7 @@ pub fn run(args: &EpicArgs, cli: &Cli) -> Result<()> {
         EpicCommands::Show(a) => show(a, cli),
         EpicCommands::Update(a) => update(a, cli),
         EpicCommands::Delete(a) => delete(a, cli),
+        EpicCommands::Cancel(a) => cancel(a, cli),
     }
 }
 
@@ -147,16 +162,19 @@ fn list(args: &EpicListArgs, cli: &Cli) -> Result<()> {
     let conn = crate::open_db(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
     let state = crate::load_state(&conn).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let epics: Vec<_> = if let Some(status_str) = &args.status {
-        let status = parse_status(status_str)?;
-        state
-            .epics
-            .values()
-            .filter(|e| e.status == status)
-            .collect()
-    } else {
-        state.epics.values().collect()
-    };
+    let status_filter = args.status.as_deref().map(parse_status).transpose()?;
+
+    let epics: Vec<_> = state
+        .epics
+        .values()
+        .filter(|e| {
+            // Default-hide cancelled unless --all or --status cancelled
+            if !args.all && status_filter.is_none() && e.status == Status::Cancelled {
+                return false;
+            }
+            status_filter.is_none_or(|s| e.status == s)
+        })
+        .collect();
 
     let mode = OutputMode::detect(cli.json, cli.plain);
     match mode {
@@ -359,6 +377,83 @@ fn delete(args: &EpicDeleteArgs, cli: &Cli) -> Result<()> {
     match mode {
         OutputMode::Json => print_json_ok(serde_json::json!({ "id": id.to_string() })),
         OutputMode::Pretty => println!("Deleted epic {}", id),
+    }
+
+    Ok(())
+}
+
+fn cancel(args: &EpicCancelArgs, cli: &Cli) -> Result<()> {
+    let agent_str = resolve_agent(cli, &args.agent)?;
+    let agent = AgentId::new(&agent_str).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let root = require_project_root(cli)?;
+    let swarmit = root.join(".swarmit");
+
+    let id: ItemId = args
+        .id
+        .parse()
+        .map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
+
+    let conn = crate::open_db(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let state = crate::load_state(&conn).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let epic = state
+        .epics
+        .get(&id)
+        .ok_or_else(|| anyhow::anyhow!("Epic not found: {}", id))?;
+
+    // Collect non-terminal task IDs for cascade info
+    let cancelled_tasks: Vec<ItemId> = epic
+        .task_ids
+        .iter()
+        .filter(|tid| {
+            state
+                .tasks
+                .get(*tid)
+                .is_some_and(|t| !t.status.is_terminal())
+        })
+        .cloned()
+        .collect();
+
+    let op = Operation::new(
+        agent,
+        OperationKind::CancelEpic {
+            id: id.clone(),
+            reason: args.reason.clone(),
+        },
+    );
+
+    crate::write_operation(&conn, &op).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let post_state = crate::load_state(&conn).map_err(|e| anyhow::anyhow!("{}", e))?;
+    if should_materialize(&post_state) {
+        let state_dir = materialize_path(&swarmit, &post_state);
+        if let Some(epic) = post_state.epics.get(&id) {
+            let tasks = post_state.tasks_for_epic(&id);
+            markdown::materialize_epic(&state_dir, epic, &tasks)
+                .map_err(|e| anyhow::anyhow!("Failed to materialize markdown: {}", e))?;
+        }
+    }
+
+    let mode = OutputMode::detect(cli.json, cli.plain);
+    match mode {
+        OutputMode::Json => print_json_ok(serde_json::json!({
+            "id": id.to_string(),
+            "cancelled": true,
+            "tasks_cancelled": cancelled_tasks.iter().map(|t| t.to_string()).collect::<Vec<_>>(),
+        })),
+        OutputMode::Pretty => {
+            println!("Cancelled epic {}", id);
+            if !cancelled_tasks.is_empty() {
+                println!(
+                    "  Also cancelled {} task(s): {}",
+                    cancelled_tasks.len(),
+                    cancelled_tasks
+                        .iter()
+                        .map(|t| t.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+        }
     }
 
     Ok(())

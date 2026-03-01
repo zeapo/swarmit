@@ -27,6 +27,8 @@ pub enum TaskCommands {
     Delete(TaskDeleteArgs),
     Claim(TaskClaimArgs),
     Done(TaskDoneArgs),
+    /// Cancel a task with a required reason
+    Cancel(TaskCancelArgs),
 }
 
 #[derive(Args, Debug)]
@@ -51,6 +53,9 @@ pub struct TaskListArgs {
     pub epic: Option<String>,
     #[arg(long)]
     pub assignee: Option<String>,
+    /// Include cancelled tasks in the listing
+    #[arg(long)]
+    pub all: bool,
     #[arg(long)]
     pub agent: Option<String>,
 }
@@ -100,6 +105,15 @@ pub struct TaskDoneArgs {
     pub agent: Option<String>,
 }
 
+#[derive(Args, Debug)]
+pub struct TaskCancelArgs {
+    pub id: String,
+    #[arg(long)]
+    pub reason: String,
+    #[arg(long)]
+    pub agent: Option<String>,
+}
+
 /// Materializes the task's markdown file from the given state.
 fn materialize_task_from_state(
     state_dir: &std::path::Path,
@@ -133,6 +147,7 @@ pub fn run(args: &TaskArgs, cli: &Cli) -> Result<()> {
         TaskCommands::Delete(a) => delete(a, cli),
         TaskCommands::Claim(a) => claim(a, cli),
         TaskCommands::Done(a) => done(a, cli),
+        TaskCommands::Cancel(a) => cancel(a, cli),
     }
 }
 
@@ -225,6 +240,11 @@ fn list(args: &TaskListArgs, cli: &Cli) -> Result<()> {
         .tasks
         .values()
         .filter(|t| {
+            // Default-hide cancelled unless --all or --status cancelled
+            if !args.all && status_filter.is_none() && t.status == crate::models::Status::Cancelled
+            {
+                return false;
+            }
             status_filter.is_none_or(|s| t.status == s)
                 && epic_filter
                     .as_ref()
@@ -593,6 +613,45 @@ fn done(args: &TaskDoneArgs, cli: &Cli) -> Result<()> {
             print_json_ok(serde_json::json!({ "id": id.to_string(), "done": true }))
         }
         OutputMode::Pretty => println!("Completed task {}", id),
+    }
+
+    Ok(())
+}
+
+fn cancel(args: &TaskCancelArgs, cli: &Cli) -> Result<()> {
+    let agent_str = resolve_agent(cli, &args.agent)?;
+    let agent = AgentId::new(&agent_str).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let root = require_project_root(cli)?;
+    let swarmit = root.join(".swarmit");
+
+    let conn = crate::open_db(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let id: ItemId = args
+        .id
+        .parse()
+        .map_err(|e: crate::SwarmitError| anyhow::anyhow!("{}", e))?;
+    let op = Operation::new(
+        agent,
+        OperationKind::CancelTask {
+            id: id.clone(),
+            reason: args.reason.clone(),
+        },
+    );
+
+    crate::write_operation(&conn, &op).map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let post_state = crate::load_state(&conn).map_err(|e| anyhow::anyhow!("{}", e))?;
+    if should_materialize(&post_state) {
+        let state_dir = materialize_path(&swarmit, &post_state);
+        materialize_task_from_state(&state_dir, &post_state, &id)?;
+    }
+
+    let mode = OutputMode::detect(cli.json, cli.plain);
+    match mode {
+        OutputMode::Json => {
+            print_json_ok(serde_json::json!({ "id": id.to_string(), "cancelled": true }))
+        }
+        OutputMode::Pretty => println!("Cancelled task {}", id),
     }
 
     Ok(())

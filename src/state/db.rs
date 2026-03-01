@@ -757,6 +757,109 @@ fn apply_to_db(conn: &Connection, op: &Operation) -> crate::models::Result<()> {
             }
         }
 
+        OperationKind::CancelTask { id, reason } => {
+            conn.execute(
+                "UPDATE tasks SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                params![
+                    enum_to_str(&Status::Cancelled),
+                    dt_to_str(&op.timestamp),
+                    id.as_str(),
+                ],
+            )
+            .map_err(sqlite_err)?;
+
+            // Auto-comment with the cancellation reason
+            let comment_id = uuid::Uuid::now_v7();
+            conn.execute(
+                "INSERT INTO comments (id, task_id, author, body, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    comment_id.to_string(),
+                    id.as_str(),
+                    op.agent.as_str(),
+                    format!("Cancelled: {}", reason),
+                    dt_to_str(&op.timestamp),
+                ],
+            )
+            .map_err(sqlite_err)?;
+
+            // Check epic completion
+            let epic_id: Option<String> = conn
+                .query_row(
+                    "SELECT epic_id FROM tasks WHERE id = ?1",
+                    params![id.as_str()],
+                    |row| row.get(0),
+                )
+                .ok()
+                .flatten();
+            if let Some(eid_str) = &epic_id {
+                if let Ok(eid) = eid_str.parse::<ItemId>() {
+                    check_epic_completion_db(conn, &eid, op.timestamp)?;
+                }
+            }
+        }
+
+        OperationKind::CancelEpic { id, reason } => {
+            conn.execute(
+                "UPDATE epics SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                params![
+                    enum_to_str(&Status::Cancelled),
+                    dt_to_str(&op.timestamp),
+                    id.as_str(),
+                ],
+            )
+            .map_err(sqlite_err)?;
+
+            // Cascade: cancel all non-terminal tasks in the epic
+            let task_ids: Vec<String> = {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT et.task_id FROM epic_task_ids et
+                         JOIN tasks t ON et.task_id = t.id
+                         WHERE et.epic_id = ?1 AND t.status NOT IN (?2, ?3)",
+                    )
+                    .map_err(sqlite_err)?;
+                let rows = stmt
+                    .query_map(
+                        params![
+                            id.as_str(),
+                            enum_to_str(&Status::Done),
+                            enum_to_str(&Status::Cancelled),
+                        ],
+                        |row| row.get(0),
+                    )
+                    .map_err(sqlite_err)?;
+                rows.filter_map(|r| r.ok()).collect()
+            };
+
+            for tid_str in &task_ids {
+                conn.execute(
+                    "UPDATE tasks SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![
+                        enum_to_str(&Status::Cancelled),
+                        dt_to_str(&op.timestamp),
+                        tid_str,
+                    ],
+                )
+                .map_err(sqlite_err)?;
+
+                // Auto-comment on each cascaded task
+                let comment_id = uuid::Uuid::now_v7();
+                conn.execute(
+                    "INSERT INTO comments (id, task_id, author, body, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        comment_id.to_string(),
+                        tid_str,
+                        op.agent.as_str(),
+                        format!("Cancelled (epic {}): {}", id, reason),
+                        dt_to_str(&op.timestamp),
+                    ],
+                )
+                .map_err(sqlite_err)?;
+            }
+        }
+
         OperationKind::DeleteTask { id } => {
             // Capture epic before deletion
             let epic_id: Option<String> = conn
@@ -849,7 +952,7 @@ fn apply_to_db(conn: &Connection, op: &Operation) -> crate::models::Result<()> {
     Ok(())
 }
 
-/// Auto-close an epic if it has tasks and all are Done.
+/// Auto-close an epic if it has tasks and all are terminal (Done or Cancelled).
 fn check_epic_completion_db(
     conn: &Connection,
     epic_id: &ItemId,
@@ -868,18 +971,22 @@ fn check_epic_completion_db(
         return Ok(());
     }
 
-    // Count non-done tasks
-    let non_done: i64 = conn
+    // Count non-terminal tasks (not Done and not Cancelled)
+    let non_terminal: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM epic_task_ids et
              JOIN tasks t ON et.task_id = t.id
-             WHERE et.epic_id = ?1 AND t.status != ?2",
-            params![epic_id.as_str(), enum_to_str(&Status::Done)],
+             WHERE et.epic_id = ?1 AND t.status NOT IN (?2, ?3)",
+            params![
+                epic_id.as_str(),
+                enum_to_str(&Status::Done),
+                enum_to_str(&Status::Cancelled),
+            ],
             |row| row.get(0),
         )
         .map_err(sqlite_err)?;
 
-    if non_done == 0 {
+    if non_terminal == 0 {
         conn.execute(
             "UPDATE epics SET status = ?1, updated_at = ?2 WHERE id = ?3",
             params![
@@ -4325,5 +4432,239 @@ mod tests {
             0,
             "rollback should prevent partial log entry"
         );
+    }
+
+    // ── Cancel operation DB tests ─────────────────────────────────────────
+
+    #[test]
+    fn cancel_task_db_roundtrip() {
+        let dir = tempdir().unwrap();
+        let conn = open_db(dir.path()).unwrap();
+        let agent = AgentId::new("test").unwrap();
+
+        // Init project + create task
+        write_operation(
+            &conn,
+            &Operation::new(
+                agent.clone(),
+                OperationKind::InitProject {
+                    name: "Test".into(),
+                    description: None,
+                    epic_prefix: None,
+                    task_prefix: None,
+                    auto_materialize: None,
+                    materialize_path: None,
+                },
+            ),
+        )
+        .unwrap();
+
+        let task_id: ItemId = "TASK-001".parse().unwrap();
+        write_operation(
+            &conn,
+            &Operation::new(
+                agent.clone(),
+                OperationKind::CreateTask {
+                    id: task_id.clone(),
+                    title: "Test task".into(),
+                    description: None,
+                    priority: Priority::Medium,
+                    epic_id: None,
+                },
+            ),
+        )
+        .unwrap();
+
+        // Cancel the task
+        write_operation(
+            &conn,
+            &Operation::new(
+                agent.clone(),
+                OperationKind::CancelTask {
+                    id: task_id.clone(),
+                    reason: "no longer needed".into(),
+                },
+            ),
+        )
+        .unwrap();
+
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.tasks[&task_id].status, Status::Cancelled);
+        let comments = state.comments_for(&task_id);
+        assert_eq!(comments.len(), 1);
+        assert!(comments[0].body.contains("no longer needed"));
+    }
+
+    #[test]
+    fn cancel_epic_db_cascades_to_tasks() {
+        let dir = tempdir().unwrap();
+        let conn = open_db(dir.path()).unwrap();
+        let agent = AgentId::new("test").unwrap();
+
+        write_operation(
+            &conn,
+            &Operation::new(
+                agent.clone(),
+                OperationKind::InitProject {
+                    name: "Test".into(),
+                    description: None,
+                    epic_prefix: None,
+                    task_prefix: None,
+                    auto_materialize: None,
+                    materialize_path: None,
+                },
+            ),
+        )
+        .unwrap();
+
+        let epic_id: ItemId = "EPIC-001".parse().unwrap();
+        write_operation(
+            &conn,
+            &Operation::new(
+                agent.clone(),
+                OperationKind::CreateEpic {
+                    id: epic_id.clone(),
+                    title: "Test epic".into(),
+                    description: None,
+                    priority: Priority::Medium,
+                },
+            ),
+        )
+        .unwrap();
+
+        let t1: ItemId = "TASK-001".parse().unwrap();
+        let t2: ItemId = "TASK-002".parse().unwrap();
+        let t3: ItemId = "TASK-003".parse().unwrap();
+        for tid in [&t1, &t2, &t3] {
+            write_operation(
+                &conn,
+                &Operation::new(
+                    agent.clone(),
+                    OperationKind::CreateTask {
+                        id: tid.clone(),
+                        title: format!("Task {}", tid),
+                        description: None,
+                        priority: Priority::Medium,
+                        epic_id: Some(epic_id.clone()),
+                    },
+                ),
+            )
+            .unwrap();
+        }
+
+        // Complete t1 so it's already terminal
+        write_operation(
+            &conn,
+            &Operation::new(
+                agent.clone(),
+                OperationKind::CompleteTask { id: t1.clone() },
+            ),
+        )
+        .unwrap();
+
+        // Cancel the epic
+        write_operation(
+            &conn,
+            &Operation::new(
+                agent.clone(),
+                OperationKind::CancelEpic {
+                    id: epic_id.clone(),
+                    reason: "duplicate".into(),
+                },
+            ),
+        )
+        .unwrap();
+
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.epics[&epic_id].status, Status::Cancelled);
+        assert_eq!(state.tasks[&t1].status, Status::Done); // already terminal, unchanged
+        assert_eq!(state.tasks[&t2].status, Status::Cancelled);
+        assert_eq!(state.tasks[&t3].status, Status::Cancelled);
+
+        // Check cascade comments
+        assert!(state.comments_for(&t1).is_empty());
+        assert_eq!(state.comments_for(&t2).len(), 1);
+        assert!(state.comments_for(&t2)[0].body.contains("duplicate"));
+    }
+
+    #[test]
+    fn cancel_task_triggers_epic_auto_completion_db() {
+        let dir = tempdir().unwrap();
+        let conn = open_db(dir.path()).unwrap();
+        let agent = AgentId::new("test").unwrap();
+
+        write_operation(
+            &conn,
+            &Operation::new(
+                agent.clone(),
+                OperationKind::InitProject {
+                    name: "Test".into(),
+                    description: None,
+                    epic_prefix: None,
+                    task_prefix: None,
+                    auto_materialize: None,
+                    materialize_path: None,
+                },
+            ),
+        )
+        .unwrap();
+
+        let epic_id: ItemId = "EPIC-001".parse().unwrap();
+        write_operation(
+            &conn,
+            &Operation::new(
+                agent.clone(),
+                OperationKind::CreateEpic {
+                    id: epic_id.clone(),
+                    title: "Test epic".into(),
+                    description: None,
+                    priority: Priority::Medium,
+                },
+            ),
+        )
+        .unwrap();
+
+        let t1: ItemId = "TASK-001".parse().unwrap();
+        let t2: ItemId = "TASK-002".parse().unwrap();
+        for tid in [&t1, &t2] {
+            write_operation(
+                &conn,
+                &Operation::new(
+                    agent.clone(),
+                    OperationKind::CreateTask {
+                        id: tid.clone(),
+                        title: format!("Task {}", tid),
+                        description: None,
+                        priority: Priority::Medium,
+                        epic_id: Some(epic_id.clone()),
+                    },
+                ),
+            )
+            .unwrap();
+        }
+
+        // Complete t1, cancel t2 — both terminal → epic should auto-close
+        write_operation(
+            &conn,
+            &Operation::new(
+                agent.clone(),
+                OperationKind::CompleteTask { id: t1.clone() },
+            ),
+        )
+        .unwrap();
+        write_operation(
+            &conn,
+            &Operation::new(
+                agent.clone(),
+                OperationKind::CancelTask {
+                    id: t2.clone(),
+                    reason: "not needed".into(),
+                },
+            ),
+        )
+        .unwrap();
+
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.epics[&epic_id].status, Status::Done);
     }
 }

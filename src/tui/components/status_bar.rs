@@ -36,7 +36,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         match &app.screen {
             Screen::Main => {
                 let filter_label = match &app.dashboard_filter {
-                    None => "All".to_string(),
+                    None => "Active".to_string(),
                     Some(s) => format!("{}", s),
                 };
                 let sort_label = app.dashboard_sort.label();

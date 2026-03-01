@@ -88,6 +88,14 @@ pub enum OperationKind {
     CompleteTask {
         id: ItemId,
     },
+    CancelTask {
+        id: ItemId,
+        reason: String,
+    },
+    CancelEpic {
+        id: ItemId,
+        reason: String,
+    },
     DeleteTask {
         id: ItemId,
     },

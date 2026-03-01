@@ -39,6 +39,12 @@ swarmit epic update <EPIC-ID> [--title <T>] [--description <D>]
                    --agent <ID>
 
 swarmit epic delete <EPIC-ID> --agent <ID>
+
+swarmit epic cancel <EPIC-ID> --reason <TEXT> --agent <ID>
+  # Sets epic → Cancelled, cascades to all non-terminal tasks
+
+swarmit epic list [--all]
+  # --all includes cancelled epics (hidden by default)
 ```
 
 ---
@@ -66,6 +72,12 @@ swarmit task claim <TASK-ID> --agent <ID>
 
 swarmit task done <TASK-ID> --agent <ID>
   # Sets status → Done, records completion timestamp
+
+swarmit task cancel <TASK-ID> --reason <TEXT> --agent <ID>
+  # Sets status → Cancelled, auto-adds reason as comment
+
+swarmit task list [--all]
+  # --all includes cancelled tasks (hidden by default)
 ```
 
 ---
@@ -202,7 +214,7 @@ Rotates the operations log:
 | `in_progress` | Being worked on |
 | `done` | Completed |
 | `blocked` | Waiting on something |
-| `cancelled` | Won't do |
+| `cancelled` | Won't do (hidden from default listings, use `--all` to see) |
 
 Aliases: `wip` → `in_progress`, `complete` → `done`, `canceled` → `cancelled`
 
@@ -212,11 +224,10 @@ Aliases: `wip` → `in_progress`, `complete` → `done`, `canceled` → `cancell
 
 ```
 .swarmit/
-  project.toml          # Project configuration
-  operations.log        # Append-only JSONL event log
-  operations.lock       # Exclusive write lock (fd-lock)
-  operations.log.bak    # Backup after compaction
-  state/
+  state.db              # Single SQLite database (WAL mode)
+                        #   operations table (event log)
+                        #   materialized state tables (epics, tasks, etc.)
+  state/                # Optional materialized markdown (if auto_materialize enabled)
     epics/
       EPIC-001-auth/
         epic.md         # YAML frontmatter + markdown body

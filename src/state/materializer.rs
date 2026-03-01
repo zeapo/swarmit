@@ -281,6 +281,57 @@ impl ProjectState {
                 }
             }
 
+            OperationKind::CancelTask { id, reason } => {
+                let epic_id = {
+                    let task = self
+                        .tasks
+                        .get_mut(&id)
+                        .ok_or_else(|| SwarmitError::NotFound(id.clone()))?;
+                    task.status = Status::Cancelled;
+                    task.updated_at = op.timestamp;
+                    task.epic_id.clone()
+                };
+                // Auto-comment with the cancellation reason
+                let comment = Comment {
+                    id: uuid::Uuid::now_v7(),
+                    task_id: id.clone(),
+                    author: op.agent.clone(),
+                    body: format!("Cancelled: {}", reason),
+                    created_at: op.timestamp,
+                };
+                self.comments.entry(id).or_default().push(comment);
+                if let Some(eid) = epic_id {
+                    self.check_epic_completion(&eid, op.timestamp);
+                }
+            }
+
+            OperationKind::CancelEpic { id, reason } => {
+                let epic = self
+                    .epics
+                    .get_mut(&id)
+                    .ok_or_else(|| SwarmitError::NotFound(id.clone()))?;
+                epic.status = Status::Cancelled;
+                epic.updated_at = op.timestamp;
+                // Cascade: cancel all non-terminal tasks in the epic
+                let task_ids = epic.task_ids.clone();
+                for tid in task_ids {
+                    if let Some(task) = self.tasks.get_mut(&tid) {
+                        if !task.status.is_terminal() {
+                            task.status = Status::Cancelled;
+                            task.updated_at = op.timestamp;
+                            let comment = Comment {
+                                id: uuid::Uuid::now_v7(),
+                                task_id: tid.clone(),
+                                author: op.agent.clone(),
+                                body: format!("Cancelled (epic {}): {}", id, reason),
+                                created_at: op.timestamp,
+                            };
+                            self.comments.entry(tid).or_default().push(comment);
+                        }
+                    }
+                }
+            }
+
             OperationKind::DeleteTask { id } => {
                 let epic_id = if let Some(task) = self.tasks.remove(&id) {
                     // Remove from epic task list
@@ -360,12 +411,11 @@ impl ProjectState {
         if epic.task_ids.is_empty() {
             return;
         }
-        let all_done = epic.task_ids.iter().all(|tid| {
-            self.tasks
-                .get(tid)
-                .is_some_and(|t| t.status == Status::Done)
-        });
-        if all_done {
+        let all_resolved = epic
+            .task_ids
+            .iter()
+            .all(|tid| self.tasks.get(tid).is_some_and(|t| t.status.is_terminal()));
+        if all_resolved {
             if let Some(epic) = self.epics.get_mut(epic_id) {
                 epic.status = Status::Done;
                 epic.updated_at = timestamp;
@@ -975,5 +1025,114 @@ mod tests {
             "task_ids should contain TASK-058 exactly once, got: {:?}",
             task_ids
         );
+    }
+
+    // ── Cancel operation tests ────────────────────────────────────────────
+
+    #[test]
+    fn cancel_task_sets_status_and_adds_comment() {
+        let mut state = ProjectState::new();
+        let task_id: ItemId = "TASK-001".parse().unwrap();
+
+        state
+            .apply(op(OperationKind::CreateTask {
+                id: task_id.clone(),
+                title: "Task".to_string(),
+                description: None,
+                priority: Priority::Medium,
+                epic_id: None,
+            }))
+            .unwrap();
+
+        state
+            .apply(op(OperationKind::CancelTask {
+                id: task_id.clone(),
+                reason: "no longer needed".to_string(),
+            }))
+            .unwrap();
+
+        assert_eq!(state.tasks[&task_id].status, Status::Cancelled);
+        let comments = state.comments_for(&task_id);
+        assert_eq!(comments.len(), 1);
+        assert!(comments[0].body.contains("no longer needed"));
+    }
+
+    #[test]
+    fn cancel_task_triggers_epic_auto_completion() {
+        let mut state = ProjectState::new();
+        let (epic_id, task_ids) = make_epic_with_tasks(&mut state, &["TASK-001", "TASK-002"]);
+
+        // Complete first, cancel second
+        state
+            .apply(op(OperationKind::CompleteTask {
+                id: task_ids[0].clone(),
+            }))
+            .unwrap();
+        state
+            .apply(op(OperationKind::CancelTask {
+                id: task_ids[1].clone(),
+                reason: "not needed".to_string(),
+            }))
+            .unwrap();
+
+        // Epic should auto-close because all tasks are terminal
+        assert_eq!(state.epics[&epic_id].status, Status::Done);
+    }
+
+    #[test]
+    fn cancel_epic_cascades_to_non_terminal_tasks() {
+        let mut state = ProjectState::new();
+        let (epic_id, task_ids) =
+            make_epic_with_tasks(&mut state, &["TASK-001", "TASK-002", "TASK-003"]);
+
+        // Complete TASK-001 so it's already terminal
+        state
+            .apply(op(OperationKind::CompleteTask {
+                id: task_ids[0].clone(),
+            }))
+            .unwrap();
+
+        // Cancel the epic
+        state
+            .apply(op(OperationKind::CancelEpic {
+                id: epic_id.clone(),
+                reason: "duplicate".to_string(),
+            }))
+            .unwrap();
+
+        assert_eq!(state.epics[&epic_id].status, Status::Cancelled);
+        // TASK-001 was Done — should stay Done
+        assert_eq!(state.tasks[&task_ids[0]].status, Status::Done);
+        // TASK-002 and TASK-003 were Todo — should be Cancelled
+        assert_eq!(state.tasks[&task_ids[1]].status, Status::Cancelled);
+        assert_eq!(state.tasks[&task_ids[2]].status, Status::Cancelled);
+
+        // Cascade should add comments to cancelled tasks but not Done ones
+        assert!(state.comments_for(&task_ids[0]).is_empty());
+        assert_eq!(state.comments_for(&task_ids[1]).len(), 1);
+        assert!(state.comments_for(&task_ids[1])[0]
+            .body
+            .contains("duplicate"));
+        assert_eq!(state.comments_for(&task_ids[2]).len(), 1);
+    }
+
+    #[test]
+    fn cancel_nonexistent_task_fails() {
+        let mut state = ProjectState::new();
+        let result = state.apply(op(OperationKind::CancelTask {
+            id: "TASK-999".parse().unwrap(),
+            reason: "gone".to_string(),
+        }));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cancel_nonexistent_epic_fails() {
+        let mut state = ProjectState::new();
+        let result = state.apply(op(OperationKind::CancelEpic {
+            id: "EPIC-999".parse().unwrap(),
+            reason: "gone".to_string(),
+        }));
+        assert!(result.is_err());
     }
 }
