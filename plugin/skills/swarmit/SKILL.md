@@ -20,11 +20,11 @@ Before doing anything else, verify the installed swarmit version:
 swarmit --version
 ```
 
-Expected output: `swarmit 1.2.0` (or newer).
+Expected output: `swarmit 1.2.1` (or newer).
 
 - **Command not found** → ask the user to install: `cargo install swarmit`
-- **Version older than 1.2.0** → ask the user to update: `cargo install swarmit`
-- **Version 1.2.0 or newer** → proceed silently
+- **Version older than 1.2.1** → ask the user to update: `cargo install swarmit`
+- **Version 1.2.1 or newer** → proceed silently
 
 Do not continue with task management commands until the version check passes.
 
