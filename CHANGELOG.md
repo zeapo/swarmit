@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-03-01
+
+### Added
+
+- `task cancel` and `epic cancel` CLI commands with `--reason` flag.
+- Epic cancellation cascades to all non-terminal child tasks.
+- Cancelled items hidden from default `task list` and `epic list` output;
+  use `--all` or `--status cancelled` to view them.
+- Auto-completion logic treats cancelled tasks as terminal alongside done.
+- TUI filter and status bar support for cancelled status.
+
 ## [1.1.0] - 2026-02-28
 
 ### Changed
@@ -69,6 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Event-sourced architecture with deterministic replay.
 - Skill files for Claude Code agent integration.
 
+[1.2.0]: https://github.com/zeapo/swarmit/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/zeapo/swarmit/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/zeapo/swarmit/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/zeapo/swarmit/compare/v1.0.0...v1.0.1

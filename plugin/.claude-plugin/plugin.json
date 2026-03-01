@@ -1,5 +1,5 @@
 {
   "name": "swarmit",
   "description": "Multi-agent task management skill for Claude Code agents using the swarmit CLI",
-  "version": "1.1.0"
+  "version": "1.2.0"
 }
