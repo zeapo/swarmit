@@ -133,6 +133,11 @@ just bump 1.2.0      # Bump version in Cargo.toml
 
 The `exclude` list in `Cargo.toml` keeps docs, IDE files, and `.swarmit/` out of the package.
 
+**Version sync:** When bumping the version, update all three files together:
+- `Cargo.toml` — crate version
+- `plugin/skills/swarmit/SKILL.md` — expected version in the "Version Check" section
+- `plugin/plugin.json` — plugin version (if present)
+
 ## Task Management (Swarmit)
 
 **Use swarmit instead of Claude Code's built-in todo tools.**

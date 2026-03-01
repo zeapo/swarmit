@@ -12,6 +12,22 @@ Swarmit is a local-first project management tool for multi-agent Claude Code wor
 Tasks are tracked in `.swarmit/` using an append-only event log. Multiple agents can
 work concurrently — all writes are lock-protected.
 
+## Version Check
+
+Before doing anything else, verify the installed swarmit version:
+
+```bash
+swarmit --version
+```
+
+Expected output: `swarmit 1.2.0` (or newer).
+
+- **Command not found** → ask the user to install: `cargo install swarmit`
+- **Version older than 1.2.0** → ask the user to update: `cargo install swarmit`
+- **Version 1.2.0 or newer** → proceed silently
+
+Do not continue with task management commands until the version check passes.
+
 ## Core Workflow
 
 ### 1. Find work
