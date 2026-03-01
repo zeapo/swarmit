@@ -272,4 +272,4 @@ Tests use `tempfile` for isolated directories — no global state.
 
 ## License
 
-MIT
+Apache 2.0
