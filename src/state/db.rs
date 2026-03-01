@@ -135,6 +135,45 @@ CREATE TABLE IF NOT EXISTS sequences (
 );
 ";
 
+// ── Sequence kind enum (type-safe replacement for raw SQL interpolation) ─
+
+/// Identifies which sequence counter / prefix to use when allocating an ID.
+///
+/// Using a closed enum instead of raw `&str` parameters eliminates any
+/// possibility of SQL injection in `allocate_and_write`, since every variant
+/// maps to compile-time `&'static str` constants.
+#[derive(Debug, Clone, Copy)]
+enum SeqKind {
+    Task,
+    Epic,
+}
+
+impl SeqKind {
+    /// Name of the row in the `sequences` table.
+    fn seq_name(self) -> &'static str {
+        match self {
+            SeqKind::Task => "task_seq",
+            SeqKind::Epic => "epic_seq",
+        }
+    }
+
+    /// Column name in the `config` table that holds the custom prefix.
+    fn prefix_column(self) -> &'static str {
+        match self {
+            SeqKind::Task => "task_prefix",
+            SeqKind::Epic => "epic_prefix",
+        }
+    }
+
+    /// Fallback prefix when no config row exists.
+    fn default_prefix(self) -> &'static str {
+        match self {
+            SeqKind::Task => "TASK",
+            SeqKind::Epic => "EPIC",
+        }
+    }
+}
+
 // ── Public API ───────────────────────────────────────────────────────────
 
 /// Open (or create) the project database at `<project_root>/.swarmit/state.db`.
@@ -242,6 +281,109 @@ pub fn write_operations(conn: &Connection, ops: &[Operation]) -> crate::models::
 
     conn.execute_batch("COMMIT").map_err(sqlite_err)?;
     Ok(())
+}
+
+/// Atomically allocate a task ID and write a CreateTask operation.
+///
+/// Uses `BEGIN EXCLUSIVE` to serialize writers, ensuring the sequence counter
+/// increment, ID allocation, and operation write are fully atomic.
+pub fn create_task_op(
+    conn: &Connection,
+    agent: AgentId,
+    title: String,
+    description: Option<String>,
+    priority: Priority,
+    epic_id: Option<ItemId>,
+) -> crate::models::Result<(ItemId, Operation)> {
+    allocate_and_write(conn, "task_seq", "task_prefix", "TASK", |id| {
+        Operation::new(
+            agent,
+            OperationKind::CreateTask {
+                id,
+                title,
+                description,
+                priority,
+                epic_id,
+            },
+        )
+    })
+}
+
+/// Atomically allocate an epic ID and write a CreateEpic operation.
+///
+/// Uses `BEGIN EXCLUSIVE` to serialize writers, ensuring the sequence counter
+/// increment, ID allocation, and operation write are fully atomic.
+pub fn create_epic_op(
+    conn: &Connection,
+    agent: AgentId,
+    title: String,
+    description: Option<String>,
+    priority: Priority,
+) -> crate::models::Result<(ItemId, Operation)> {
+    allocate_and_write(conn, "epic_seq", "epic_prefix", "EPIC", |id| {
+        Operation::new(
+            agent,
+            OperationKind::CreateEpic {
+                id,
+                title,
+                description,
+                priority,
+            },
+        )
+    })
+}
+
+/// Shared helper: allocate a sequential ID inside `BEGIN EXCLUSIVE` and write the operation.
+///
+/// 1. Atomically increments the sequence counter using `RETURNING` (no TOCTOU).
+/// 2. Reads the prefix from the `config` table (falls back to `default_prefix`).
+/// 3. Calls `build_op` with the freshly allocated `ItemId`.
+/// 4. Writes the operation and commits (or rolls back on error).
+fn allocate_and_write(
+    conn: &Connection,
+    seq_name: &str,
+    prefix_column: &str,
+    default_prefix: &str,
+    build_op: impl FnOnce(ItemId) -> Operation,
+) -> crate::models::Result<(ItemId, Operation)> {
+    conn.execute_batch("BEGIN EXCLUSIVE").map_err(sqlite_err)?;
+
+    let result = (|| {
+        let next_seq: u32 = conn
+            .query_row(
+                &format!(
+                    "INSERT INTO sequences (name, value) VALUES ('{seq_name}', 1)
+                     ON CONFLICT(name) DO UPDATE SET value = value + 1
+                     RETURNING value"
+                ),
+                [],
+                |row| row.get(0),
+            )
+            .map_err(sqlite_err)?;
+
+        let prefix: String = conn
+            .query_row(&format!("SELECT {prefix_column} FROM config"), [], |row| {
+                row.get(0)
+            })
+            .unwrap_or_else(|_| default_prefix.to_string());
+
+        let id = ItemId::new(&prefix, next_seq);
+        let op = build_op(id.clone());
+
+        write_op_inner(conn, &op)?;
+        Ok((id, op))
+    })();
+
+    match result {
+        Ok(val) => {
+            conn.execute_batch("COMMIT").map_err(sqlite_err)?;
+            Ok(val)
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
 }
 
 /// Read operations with rowid greater than `after_rowid`.
@@ -444,10 +586,11 @@ fn apply_to_db(conn: &Connection, op: &Operation) -> crate::models::Result<()> {
                 ],
             )
             .map_err(sqlite_err)?;
-            // Update epic_seq
+            // Update epic_seq (upsert so it works even without InitProject)
             if let Some(n) = id.number() {
                 conn.execute(
-                    "UPDATE sequences SET value = MAX(value, ?1) WHERE name = 'epic_seq'",
+                    "INSERT INTO sequences (name, value) VALUES ('epic_seq', ?1)
+                     ON CONFLICT(name) DO UPDATE SET value = MAX(value, ?1)",
                     params![n],
                 )
                 .map_err(sqlite_err)?;
@@ -577,10 +720,11 @@ fn apply_to_db(conn: &Connection, op: &Operation) -> crate::models::Result<()> {
                 .map_err(sqlite_err)?;
             }
 
-            // Update task_seq
+            // Update task_seq (upsert so it works even without InitProject)
             if let Some(n) = id.number() {
                 conn.execute(
-                    "UPDATE sequences SET value = MAX(value, ?1) WHERE name = 'task_seq'",
+                    "INSERT INTO sequences (name, value) VALUES ('task_seq', ?1)
+                     ON CONFLICT(name) DO UPDATE SET value = MAX(value, ?1)",
                     params![n],
                 )
                 .map_err(sqlite_err)?;
@@ -4666,5 +4810,243 @@ mod tests {
 
         let state = load_state(&conn).unwrap();
         assert_eq!(state.epics[&epic_id].status, Status::Done);
+    }
+
+    // ── Atomic ID allocation tests ───────────────────────────────────
+
+    #[test]
+    fn test_create_task_op_sequential_ids() {
+        let (_dir, conn) = setup_db();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::InitProject {
+                name: "Atomic Test".to_string(),
+                description: None,
+                epic_prefix: None,
+                task_prefix: None,
+                auto_materialize: None,
+                materialize_path: None,
+            }),
+        )
+        .unwrap();
+
+        let (id1, _) = create_task_op(
+            &conn,
+            agent(),
+            "Task 1".to_string(),
+            None,
+            Priority::Medium,
+            None,
+        )
+        .unwrap();
+
+        let (id2, _) = create_task_op(
+            &conn,
+            agent(),
+            "Task 2".to_string(),
+            None,
+            Priority::Medium,
+            None,
+        )
+        .unwrap();
+
+        let (id3, _) = create_task_op(
+            &conn,
+            agent(),
+            "Task 3".to_string(),
+            None,
+            Priority::Medium,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(id1, "TASK-001".parse::<ItemId>().unwrap());
+        assert_eq!(id2, "TASK-002".parse::<ItemId>().unwrap());
+        assert_eq!(id3, "TASK-003".parse::<ItemId>().unwrap());
+
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.tasks.len(), 3);
+        assert_eq!(state.task_seq, 3);
+    }
+
+    #[test]
+    fn test_create_epic_op_sequential_ids() {
+        let (_dir, conn) = setup_db();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::InitProject {
+                name: "Atomic Epic Test".to_string(),
+                description: None,
+                epic_prefix: None,
+                task_prefix: None,
+                auto_materialize: None,
+                materialize_path: None,
+            }),
+        )
+        .unwrap();
+
+        let (id1, _) =
+            create_epic_op(&conn, agent(), "Epic 1".to_string(), None, Priority::Medium).unwrap();
+
+        let (id2, _) =
+            create_epic_op(&conn, agent(), "Epic 2".to_string(), None, Priority::Medium).unwrap();
+
+        assert_eq!(id1, "EPIC-001".parse::<ItemId>().unwrap());
+        assert_eq!(id2, "EPIC-002".parse::<ItemId>().unwrap());
+
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.epics.len(), 2);
+        assert_eq!(state.epic_seq, 2);
+    }
+
+    #[test]
+    fn test_create_task_op_with_epic() {
+        let (_dir, conn) = setup_db();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::InitProject {
+                name: "Epic Task Test".to_string(),
+                description: None,
+                epic_prefix: None,
+                task_prefix: None,
+                auto_materialize: None,
+                materialize_path: None,
+            }),
+        )
+        .unwrap();
+
+        let (epic_id, _) =
+            create_epic_op(&conn, agent(), "My Epic".to_string(), None, Priority::High).unwrap();
+
+        let (task_id, _) = create_task_op(
+            &conn,
+            agent(),
+            "Epic Task".to_string(),
+            Some("desc".to_string()),
+            Priority::High,
+            Some(epic_id.clone()),
+        )
+        .unwrap();
+
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.tasks[&task_id].epic_id, Some(epic_id.clone()));
+        assert!(state.epics[&epic_id].task_ids.contains(&task_id));
+    }
+
+    #[test]
+    fn test_create_task_op_uses_custom_prefix() {
+        let (_dir, conn) = setup_db();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::InitProject {
+                name: "Custom Prefix".to_string(),
+                description: None,
+                epic_prefix: Some("EP".to_string()),
+                task_prefix: Some("TODO".to_string()),
+                auto_materialize: None,
+                materialize_path: None,
+            }),
+        )
+        .unwrap();
+
+        let (task_id, _) = create_task_op(
+            &conn,
+            agent(),
+            "Custom".to_string(),
+            None,
+            Priority::Medium,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(task_id, "TODO-001".parse::<ItemId>().unwrap());
+
+        let (epic_id, _) = create_epic_op(
+            &conn,
+            agent(),
+            "Custom Epic".to_string(),
+            None,
+            Priority::Medium,
+        )
+        .unwrap();
+
+        assert_eq!(epic_id, "EP-001".parse::<ItemId>().unwrap());
+    }
+
+    #[test]
+    fn test_create_task_op_concurrent_no_duplicates() {
+        // Simulate the concurrent scenario that caused the original bug:
+        // Multiple connections writing tasks to the same DB must get unique IDs.
+        use std::sync::{Arc, Barrier};
+
+        let dir = tempdir().unwrap();
+        let swarmit_dir = dir.path().join(".swarmit");
+        std::fs::create_dir_all(&swarmit_dir).unwrap();
+
+        // Initialize the project
+        let conn = open_db(dir.path()).unwrap();
+        write_operation(
+            &conn,
+            &make_op(OperationKind::InitProject {
+                name: "Concurrent Test".to_string(),
+                description: None,
+                epic_prefix: None,
+                task_prefix: None,
+                auto_materialize: None,
+                materialize_path: None,
+            }),
+        )
+        .unwrap();
+        drop(conn);
+
+        let n_threads = 8;
+        let barrier = Arc::new(Barrier::new(n_threads));
+        let db_path = dir.path().to_path_buf();
+
+        let handles: Vec<_> = (0..n_threads)
+            .map(|i| {
+                let barrier = Arc::clone(&barrier);
+                let db_path = db_path.clone();
+                std::thread::spawn(move || {
+                    let conn = open_db(&db_path).unwrap();
+                    barrier.wait(); // all threads start at the same time
+                    let (id, _) = create_task_op(
+                        &conn,
+                        AgentId::new(&format!("agent-{i}")).unwrap(),
+                        format!("Concurrent task {i}"),
+                        None,
+                        Priority::Medium,
+                        None,
+                    )
+                    .unwrap();
+                    id
+                })
+            })
+            .collect();
+
+        let ids: Vec<ItemId> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        // All IDs must be unique
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(
+            unique.len(),
+            n_threads,
+            "All {n_threads} tasks must have unique IDs, got: {:?}",
+            ids
+        );
+
+        // All tasks must exist in the DB
+        let conn = open_db(dir.path()).unwrap();
+        let state = load_state(&conn).unwrap();
+        assert_eq!(
+            state.tasks.len(),
+            n_threads,
+            "All {n_threads} tasks must be materialized"
+        );
+        assert_eq!(state.task_seq, n_threads as u32);
     }
 }

@@ -158,15 +158,6 @@ fn create(args: &TaskCreateArgs, cli: &Cli) -> Result<()> {
     let swarmit = root.join(".swarmit");
 
     let conn = crate::open_db(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
-    let state = crate::load_state(&conn).map_err(|e| anyhow::anyhow!("{}", e))?;
-    let next_id = ItemId::new(
-        &state
-            .config
-            .as_ref()
-            .map(|c| c.task_prefix.clone())
-            .unwrap_or_else(|| "TASK".to_string()),
-        state.task_seq + 1,
-    );
 
     let priority = parse_priority(&args.priority)?;
     let epic_id = args
@@ -180,23 +171,22 @@ fn create(args: &TaskCreateArgs, cli: &Cli) -> Result<()> {
 
     // Validate epic exists if provided
     if let Some(eid) = &epic_id {
+        let state = crate::load_state(&conn).map_err(|e| anyhow::anyhow!("{}", e))?;
         if !state.epics.contains_key(eid) {
             anyhow::bail!("Epic not found: {}", eid);
         }
     }
 
-    let op = Operation::new(
+    // Atomically allocate ID + write operation (prevents TOCTOU race on task_seq)
+    let (next_id, _op) = crate::create_task_op(
+        &conn,
         agent,
-        OperationKind::CreateTask {
-            id: next_id.clone(),
-            title: args.title.clone(),
-            description: args.description.clone(),
-            priority,
-            epic_id,
-        },
-    );
-
-    crate::write_operation(&conn, &op).map_err(|e| anyhow::anyhow!("{}", e))?;
+        args.title.clone(),
+        args.description.clone(),
+        priority,
+        epic_id,
+    )
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let post_state = crate::load_state(&conn).map_err(|e| anyhow::anyhow!("{}", e))?;
     if should_materialize(&post_state) {

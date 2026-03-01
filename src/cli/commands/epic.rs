@@ -111,29 +111,18 @@ fn create(args: &EpicCreateArgs, cli: &Cli) -> Result<()> {
     let swarmit = root.join(".swarmit");
 
     let conn = crate::open_db(&root).map_err(|e| anyhow::anyhow!("{}", e))?;
-    let state = crate::load_state(&conn).map_err(|e| anyhow::anyhow!("{}", e))?;
-    let next_id = ItemId::new(
-        &state
-            .config
-            .as_ref()
-            .map(|c| c.epic_prefix.clone())
-            .unwrap_or_else(|| "EPIC".to_string()),
-        state.epic_seq + 1,
-    );
 
     let priority = parse_priority(&args.priority)?;
 
-    let op = Operation::new(
+    // Atomically allocate ID + write operation (prevents TOCTOU race on epic_seq)
+    let (next_id, _op) = crate::create_epic_op(
+        &conn,
         agent,
-        OperationKind::CreateEpic {
-            id: next_id.clone(),
-            title: args.title.clone(),
-            description: args.description.clone(),
-            priority,
-        },
-    );
-
-    crate::write_operation(&conn, &op).map_err(|e| anyhow::anyhow!("{}", e))?;
+        args.title.clone(),
+        args.description.clone(),
+        priority,
+    )
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let post_state = crate::load_state(&conn).map_err(|e| anyhow::anyhow!("{}", e))?;
     if should_materialize(&post_state) {

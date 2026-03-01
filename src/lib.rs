@@ -14,8 +14,8 @@ pub use models::{
 
 // Re-export the new database-backed public API.
 pub use state::{
-    compact_db, count_operations, latest_rowid, load_state, open_db, read_all_operations,
-    read_operations_since, write_operation, write_operations,
+    compact_db, count_operations, create_epic_op, create_task_op, latest_rowid, load_state,
+    open_db, read_all_operations, read_operations_since, write_operation, write_operations,
 };
 
 #[cfg(test)]

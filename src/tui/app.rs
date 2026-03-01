@@ -976,15 +976,6 @@ impl App {
             return;
         }
 
-        let task_prefix = self
-            .state
-            .config
-            .as_ref()
-            .map(|c| c.task_prefix.clone())
-            .unwrap_or_else(|| "TASK".to_string());
-
-        let next_id = ItemId::new(&task_prefix, self.state.task_seq + 1);
-
         let epic_id: Option<ItemId> = if epic_index == 0 {
             None
         } else {
@@ -1006,13 +997,7 @@ impl App {
             Some(desc)
         };
 
-        match self.write_operation(OperationKind::CreateTask {
-            id: next_id,
-            title,
-            description: desc_opt,
-            priority,
-            epic_id,
-        }) {
+        match self.create_task_atomic(title, desc_opt, priority, epic_id) {
             Ok(()) => {
                 self.modal = None;
             }
@@ -1060,6 +1045,32 @@ impl App {
 
         if let Err(e) = self.state.apply(op) {
             // Write succeeded in SQLite; reload full state as fallback so UI stays consistent.
+            eprintln!("Warning: in-memory apply failed ({}), reloading from DB", e);
+            if let Ok(fresh) = crate::load_state(&self.conn) {
+                self.state = fresh;
+            }
+        }
+        self.last_rowid = crate::latest_rowid(&self.conn).unwrap_or(self.last_rowid);
+        self.rebuild_dashboard_rows();
+        Ok(())
+    }
+
+    /// Atomically create a task with auto-allocated ID (prevents concurrent ID races).
+    fn create_task_atomic(
+        &mut self,
+        title: String,
+        description: Option<String>,
+        priority: Priority,
+        epic_id: Option<ItemId>,
+    ) -> Result<(), String> {
+        let agent_str = std::env::var("SWARMIT_AGENT").unwrap_or_else(|_| "tui-user".to_string());
+        let agent = AgentId::new(&agent_str).map_err(|e| format!("Invalid agent: {}", e))?;
+
+        let (_id, op) =
+            crate::create_task_op(&self.conn, agent, title, description, priority, epic_id)
+                .map_err(|e| format!("Write failed: {}", e))?;
+
+        if let Err(e) = self.state.apply(op) {
             eprintln!("Warning: in-memory apply failed ({}), reloading from DB", e);
             if let Ok(fresh) = crate::load_state(&self.conn) {
                 self.state = fresh;
