@@ -5161,4 +5161,111 @@ mod tests {
         let state = load_state(&conn).unwrap();
         assert_eq!(state.tasks[&task_id].epic_id, Some(epic_id));
     }
+
+    #[test]
+    fn test_sequential_ids_without_init_project() {
+        // Reproduces the real-world scenario: TUI auto-creates tasks without
+        // ever running InitProject, so the sequences table starts empty.
+        let (_dir, conn) = setup_db();
+
+        let (epic_id, _) = create_epic_op(
+            &conn,
+            agent(),
+            "No-init Epic".to_string(),
+            None,
+            Priority::Medium,
+        )
+        .unwrap();
+
+        let (id1, _) = create_task_op(
+            &conn,
+            agent(),
+            "Task 1".to_string(),
+            None,
+            Priority::Medium,
+            Some(epic_id.clone()),
+        )
+        .unwrap();
+
+        let (id2, _) = create_task_op(
+            &conn,
+            agent(),
+            "Task 2".to_string(),
+            None,
+            Priority::Medium,
+            Some(epic_id.clone()),
+        )
+        .unwrap();
+
+        let (id3, _) = create_task_op(
+            &conn,
+            agent(),
+            "Task 3".to_string(),
+            None,
+            Priority::Medium,
+            Some(epic_id.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(id1, "TASK-001".parse::<ItemId>().unwrap());
+        assert_eq!(id2, "TASK-002".parse::<ItemId>().unwrap());
+        assert_eq!(id3, "TASK-003".parse::<ItemId>().unwrap());
+
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.tasks.len(), 3);
+        assert_eq!(state.task_seq, 3);
+        assert_eq!(state.epic_seq, 1);
+        assert_eq!(epic_id, "EPIC-001".parse::<ItemId>().unwrap());
+    }
+
+    #[test]
+    fn test_cross_connection_sequential_without_init() {
+        // Mimics the CLI scenario: each `swarmit task create` invocation opens
+        // its own DB connection, so sequence state must survive across connections.
+        let dir = tempdir().unwrap();
+        let swarmit_dir = dir.path().join(".swarmit");
+        std::fs::create_dir_all(&swarmit_dir).unwrap();
+
+        // Connection 1: create epic
+        let epic_id = {
+            let conn = open_db(dir.path()).unwrap();
+            let (id, _) = create_epic_op(
+                &conn,
+                agent(),
+                "CLI Epic".to_string(),
+                None,
+                Priority::Medium,
+            )
+            .unwrap();
+            id
+        };
+
+        // Connections 2-4: create one task each in a fresh connection
+        let mut task_ids = Vec::new();
+        for i in 1..=3 {
+            let conn = open_db(dir.path()).unwrap();
+            let (id, _) = create_task_op(
+                &conn,
+                agent(),
+                format!("Task {}", i),
+                None,
+                Priority::Medium,
+                Some(epic_id.clone()),
+            )
+            .unwrap();
+            task_ids.push(id);
+        }
+
+        assert_eq!(task_ids[0], "TASK-001".parse::<ItemId>().unwrap());
+        assert_eq!(task_ids[1], "TASK-002".parse::<ItemId>().unwrap());
+        assert_eq!(task_ids[2], "TASK-003".parse::<ItemId>().unwrap());
+
+        // Final connection: verify full state
+        let conn = open_db(dir.path()).unwrap();
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.tasks.len(), 3);
+        assert_eq!(state.epics.len(), 1);
+        assert_eq!(state.task_seq, 3);
+        assert_eq!(state.epic_seq, 1);
+    }
 }
