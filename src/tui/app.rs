@@ -1032,26 +1032,55 @@ impl App {
             .and_then(|t| t.epic_id.clone())
     }
 
+    /// Resolve the agent identity from `SWARMIT_AGENT` env var, falling back to `"tui-user"`.
+    fn resolve_agent() -> Result<AgentId, String> {
+        let agent_str = std::env::var("SWARMIT_AGENT").unwrap_or_else(|_| "tui-user".to_string());
+        AgentId::new(&agent_str).map_err(|e| format!("Invalid agent: {}", e))
+    }
+
+    /// Replay all operations written since `old_rowid` into in-memory state.
+    ///
+    /// This ensures we never skip ops written by other agents between our last
+    /// poll and our own write.
+    fn replay_since(&mut self, old_rowid: i64) {
+        match crate::read_operations_since(&self.conn, old_rowid) {
+            Ok((ops, new_rowid)) => {
+                for op in ops {
+                    if let Err(e) = self.state.apply(op) {
+                        eprintln!("Warning: in-memory apply failed ({}), reloading from DB", e);
+                        if let Ok(fresh) = crate::load_state(&self.conn) {
+                            self.state = fresh;
+                        }
+                        self.last_rowid =
+                            crate::latest_rowid(&self.conn).unwrap_or(self.last_rowid);
+                        self.rebuild_dashboard_rows();
+                        return;
+                    }
+                }
+                self.last_rowid = new_rowid;
+            }
+            Err(e) => {
+                eprintln!("Warning: replay failed ({}), reloading from DB", e);
+                if let Ok(fresh) = crate::load_state(&self.conn) {
+                    self.state = fresh;
+                }
+                self.last_rowid = crate::latest_rowid(&self.conn).unwrap_or(self.last_rowid);
+            }
+        }
+        self.rebuild_dashboard_rows();
+    }
+
     /// Write a single operation through SQLite.
     ///
     /// Returns `Ok(())` on success, `Err(message)` on failure.
     fn write_operation(&mut self, kind: OperationKind) -> Result<(), String> {
-        let agent_str = std::env::var("SWARMIT_AGENT").unwrap_or_else(|_| "tui-user".to_string());
-        let agent = AgentId::new(&agent_str).map_err(|e| format!("Invalid agent: {}", e))?;
+        let agent = Self::resolve_agent()?;
+        let old_rowid = self.last_rowid;
 
         let op = Operation::new(agent, kind);
-
         crate::write_operation(&self.conn, &op).map_err(|e| format!("Write failed: {}", e))?;
 
-        if let Err(e) = self.state.apply(op) {
-            // Write succeeded in SQLite; reload full state as fallback so UI stays consistent.
-            eprintln!("Warning: in-memory apply failed ({}), reloading from DB", e);
-            if let Ok(fresh) = crate::load_state(&self.conn) {
-                self.state = fresh;
-            }
-        }
-        self.last_rowid = crate::latest_rowid(&self.conn).unwrap_or(self.last_rowid);
-        self.rebuild_dashboard_rows();
+        self.replay_since(old_rowid);
         Ok(())
     }
 
@@ -1063,21 +1092,14 @@ impl App {
         priority: Priority,
         epic_id: Option<ItemId>,
     ) -> Result<(), String> {
-        let agent_str = std::env::var("SWARMIT_AGENT").unwrap_or_else(|_| "tui-user".to_string());
-        let agent = AgentId::new(&agent_str).map_err(|e| format!("Invalid agent: {}", e))?;
+        let agent = Self::resolve_agent()?;
+        let old_rowid = self.last_rowid;
 
-        let (_id, op) =
+        let (_id, _op) =
             crate::create_task_op(&self.conn, agent, title, description, priority, epic_id)
                 .map_err(|e| format!("Write failed: {}", e))?;
 
-        if let Err(e) = self.state.apply(op) {
-            eprintln!("Warning: in-memory apply failed ({}), reloading from DB", e);
-            if let Ok(fresh) = crate::load_state(&self.conn) {
-                self.state = fresh;
-            }
-        }
-        self.last_rowid = crate::latest_rowid(&self.conn).unwrap_or(self.last_rowid);
-        self.rebuild_dashboard_rows();
+        self.replay_since(old_rowid);
         Ok(())
     }
 

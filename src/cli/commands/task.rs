@@ -169,15 +169,7 @@ fn create(args: &TaskCreateArgs, cli: &Cli) -> Result<()> {
         })
         .transpose()?;
 
-    // Validate epic exists if provided
-    if let Some(eid) = &epic_id {
-        let state = crate::load_state(&conn).map_err(|e| anyhow::anyhow!("{}", e))?;
-        if !state.epics.contains_key(eid) {
-            anyhow::bail!("Epic not found: {}", eid);
-        }
-    }
-
-    // Atomically allocate ID + write operation (prevents TOCTOU race on task_seq)
+    // Epic validation is done inside create_task_op's transaction (no TOCTOU race).
     let (next_id, _op) = crate::create_task_op(
         &conn,
         agent,

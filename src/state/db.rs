@@ -285,8 +285,11 @@ pub fn write_operations(conn: &Connection, ops: &[Operation]) -> crate::models::
 
 /// Atomically allocate a task ID and write a CreateTask operation.
 ///
-/// Uses `BEGIN EXCLUSIVE` to serialize writers, ensuring the sequence counter
+/// Uses `BEGIN IMMEDIATE` to serialize writers, ensuring the sequence counter
 /// increment, ID allocation, and operation write are fully atomic.
+///
+/// If `epic_id` is `Some`, the epic's existence is validated inside the
+/// transaction, eliminating any TOCTOU window.
 pub fn create_task_op(
     conn: &Connection,
     agent: AgentId,
@@ -295,7 +298,8 @@ pub fn create_task_op(
     priority: Priority,
     epic_id: Option<ItemId>,
 ) -> crate::models::Result<(ItemId, Operation)> {
-    allocate_and_write(conn, "task_seq", "task_prefix", "TASK", |id| {
+    let validate = epic_id.clone();
+    allocate_and_write(conn, SeqKind::Task, validate.as_ref(), |id| {
         Operation::new(
             agent,
             OperationKind::CreateTask {
@@ -311,7 +315,7 @@ pub fn create_task_op(
 
 /// Atomically allocate an epic ID and write a CreateEpic operation.
 ///
-/// Uses `BEGIN EXCLUSIVE` to serialize writers, ensuring the sequence counter
+/// Uses `BEGIN IMMEDIATE` to serialize writers, ensuring the sequence counter
 /// increment, ID allocation, and operation write are fully atomic.
 pub fn create_epic_op(
     conn: &Connection,
@@ -320,7 +324,7 @@ pub fn create_epic_op(
     description: Option<String>,
     priority: Priority,
 ) -> crate::models::Result<(ItemId, Operation)> {
-    allocate_and_write(conn, "epic_seq", "epic_prefix", "EPIC", |id| {
+    allocate_and_write(conn, SeqKind::Epic, None, |id| {
         Operation::new(
             agent,
             OperationKind::CreateEpic {
@@ -333,39 +337,58 @@ pub fn create_epic_op(
     })
 }
 
-/// Shared helper: allocate a sequential ID inside `BEGIN EXCLUSIVE` and write the operation.
+/// Shared helper: allocate a sequential ID inside `BEGIN IMMEDIATE` and write the operation.
 ///
-/// 1. Atomically increments the sequence counter using `RETURNING` (no TOCTOU).
-/// 2. Reads the prefix from the `config` table (falls back to `default_prefix`).
-/// 3. Calls `build_op` with the freshly allocated `ItemId`.
-/// 4. Writes the operation and commits (or rolls back on error).
+/// 1. Atomically increments the sequence counter using bound params (no SQL interpolation).
+/// 2. Reads the prefix from the `config` table (falls back to `kind.default_prefix()`).
+/// 3. If `validate_epic` is `Some`, verifies the epic exists inside the transaction.
+/// 4. Calls `build_op` with the freshly allocated `ItemId`.
+/// 5. Writes the operation and commits (or rolls back on error).
 fn allocate_and_write(
     conn: &Connection,
-    seq_name: &str,
-    prefix_column: &str,
-    default_prefix: &str,
+    kind: SeqKind,
+    validate_epic: Option<&ItemId>,
     build_op: impl FnOnce(ItemId) -> Operation,
 ) -> crate::models::Result<(ItemId, Operation)> {
-    conn.execute_batch("BEGIN EXCLUSIVE").map_err(sqlite_err)?;
+    conn.execute_batch("BEGIN IMMEDIATE").map_err(sqlite_err)?;
 
     let result = (|| {
+        // Validate epic exists inside the transaction (prevents TOCTOU race
+        // where the epic is deleted between check and write).
+        if let Some(epic_id) = validate_epic {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM epics WHERE id = ?1",
+                    params![epic_id.as_str()],
+                    |row| row.get(0),
+                )
+                .map_err(sqlite_err)?;
+            if !exists {
+                return Err(SwarmitError::NotFound(epic_id.clone()));
+            }
+        }
+
+        // Bound parameter for the sequence name — no format! interpolation.
         let next_seq: u32 = conn
             .query_row(
-                &format!(
-                    "INSERT INTO sequences (name, value) VALUES ('{seq_name}', 1)
-                     ON CONFLICT(name) DO UPDATE SET value = value + 1
-                     RETURNING value"
-                ),
-                [],
+                "INSERT INTO sequences (name, value) VALUES (?1, 1)
+                 ON CONFLICT(name) DO UPDATE SET value = value + 1
+                 RETURNING value",
+                params![kind.seq_name()],
                 |row| row.get(0),
             )
             .map_err(sqlite_err)?;
 
+        // Safe: prefix_column() returns a &'static str from a closed enum,
+        // so this is not injectable. SQLite doesn't support bound column names,
+        // but the enum guarantees only "task_prefix" or "epic_prefix" are used.
         let prefix: String = conn
-            .query_row(&format!("SELECT {prefix_column} FROM config"), [], |row| {
-                row.get(0)
-            })
-            .unwrap_or_else(|_| default_prefix.to_string());
+            .query_row(
+                &format!("SELECT {} FROM config", kind.prefix_column()),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| kind.default_prefix().to_string());
 
         let id = ItemId::new(&prefix, next_seq);
         let op = build_op(id.clone());
@@ -586,7 +609,12 @@ fn apply_to_db(conn: &Connection, op: &Operation) -> crate::models::Result<()> {
                 ],
             )
             .map_err(sqlite_err)?;
-            // Update epic_seq (upsert so it works even without InitProject)
+            // Update epic_seq (upsert so it works even without InitProject).
+            //
+            // When called via `allocate_and_write`, the sequence was already set
+            // by the allocation step. The MAX here is a safe no-op in that case.
+            // For replayed operations (via `write_operation`), this is the sole
+            // sequence updater. Do NOT change MAX to +1.
             if let Some(n) = id.number() {
                 conn.execute(
                     "INSERT INTO sequences (name, value) VALUES ('epic_seq', ?1)
@@ -720,7 +748,12 @@ fn apply_to_db(conn: &Connection, op: &Operation) -> crate::models::Result<()> {
                 .map_err(sqlite_err)?;
             }
 
-            // Update task_seq (upsert so it works even without InitProject)
+            // Update task_seq (upsert so it works even without InitProject).
+            //
+            // When called via `allocate_and_write`, the sequence was already set
+            // by the allocation step. The MAX here is a safe no-op in that case.
+            // For replayed operations (via `write_operation`), this is the sole
+            // sequence updater. Do NOT change MAX to +1.
             if let Some(n) = id.number() {
                 conn.execute(
                     "INSERT INTO sequences (name, value) VALUES ('task_seq', ?1)
@@ -5048,5 +5081,84 @@ mod tests {
             "All {n_threads} tasks must be materialized"
         );
         assert_eq!(state.task_seq, n_threads as u32);
+    }
+
+    #[test]
+    fn test_create_task_op_rejects_nonexistent_epic() {
+        let (_dir, conn) = setup_db();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::InitProject {
+                name: "Epic Validation".to_string(),
+                description: None,
+                epic_prefix: None,
+                task_prefix: None,
+                auto_materialize: None,
+                materialize_path: None,
+            }),
+        )
+        .unwrap();
+
+        let bogus_epic: ItemId = "EPIC-999".parse().unwrap();
+        let result = create_task_op(
+            &conn,
+            agent(),
+            "Orphan task".to_string(),
+            None,
+            Priority::Medium,
+            Some(bogus_epic.clone()),
+        );
+
+        assert!(result.is_err(), "Should fail for non-existent epic");
+        match result.unwrap_err() {
+            SwarmitError::NotFound(id) => assert_eq!(id, bogus_epic),
+            other => panic!("Expected NotFound, got: {:?}", other),
+        }
+
+        // Sequence counter must NOT have been bumped (transaction rolled back)
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.tasks.len(), 0);
+        assert_eq!(state.task_seq, 0);
+    }
+
+    #[test]
+    fn test_create_task_op_succeeds_with_valid_epic() {
+        let (_dir, conn) = setup_db();
+
+        write_operation(
+            &conn,
+            &make_op(OperationKind::InitProject {
+                name: "Valid Epic".to_string(),
+                description: None,
+                epic_prefix: None,
+                task_prefix: None,
+                auto_materialize: None,
+                materialize_path: None,
+            }),
+        )
+        .unwrap();
+
+        let (epic_id, _) = create_epic_op(
+            &conn,
+            agent(),
+            "Real Epic".to_string(),
+            None,
+            Priority::Medium,
+        )
+        .unwrap();
+
+        let (task_id, _) = create_task_op(
+            &conn,
+            agent(),
+            "Linked task".to_string(),
+            None,
+            Priority::Medium,
+            Some(epic_id.clone()),
+        )
+        .unwrap();
+
+        let state = load_state(&conn).unwrap();
+        assert_eq!(state.tasks[&task_id].epic_id, Some(epic_id));
     }
 }
