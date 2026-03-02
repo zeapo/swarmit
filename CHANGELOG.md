@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-03-02
+
+### Fixed
+
+- Publish atomic ID allocation fix for tasks and epics. Version 1.2.1
+  was published before the fix landed, so users on 1.2.1 from crates.io
+  still had the TOCTOU bug where sequential `task create` calls could
+  produce duplicate IDs.
+
+### Added
+
+- Regression tests for sequential ID allocation without `InitProject`
+  (single-connection and cross-connection scenarios).
+
+## [1.2.1] - 2026-03-01
+
+### Fixed
+
+- Atomic ID allocation for tasks and epics. `create_task_op` and
+  `create_epic_op` now use `BEGIN IMMEDIATE` transactions to serialize
+  the sequence counter increment, ID allocation, and operation write,
+  eliminating a TOCTOU race that could produce duplicate IDs under
+  concurrent access.
+- Epic existence validation moved inside the atomic transaction,
+  closing a window where an epic could be deleted between validation
+  and task creation.
+
 ## [1.2.0] - 2026-03-01
 
 ### Added
@@ -80,6 +107,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Event-sourced architecture with deterministic replay.
 - Skill files for Claude Code agent integration.
 
+[1.2.2]: https://github.com/zeapo/swarmit/compare/v1.2.1...v1.2.2
+[1.2.1]: https://github.com/zeapo/swarmit/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/zeapo/swarmit/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/zeapo/swarmit/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/zeapo/swarmit/compare/v1.0.1...v1.0.2
